@@ -117,23 +117,7 @@ func (d *inputDecoder) feed(data []byte) []inputEvent {
 			}
 			seq := string(b[2 : end+1])
 			d.pending = b[end+1:]
-			keys := map[string]string{"A": "k", "B": "j", "H": "g", "F": "G", "1~": "g", "4~": "G", "7~": "g", "8~": "G", "5~": "b", "6~": " "}
-			if key, ok := keys[seq]; ok {
-				events = append(events, inputEvent{kind: "key", value: key})
-			}
-			if strings.HasPrefix(seq, "<") && strings.HasSuffix(seq, "M") {
-				parts := strings.Split(strings.TrimSuffix(seq[1:], "M"), ";")
-				if len(parts) == 3 {
-					code, _ := strconv.Atoi(parts[0])
-					if code&64 != 0 {
-						key := "k"
-						if code&1 != 0 {
-							key = "j"
-						}
-						events = append(events, inputEvent{kind: "key", value: key})
-					}
-				}
-			}
+			events = append(events, decodeCSI(seq)...)
 			continue
 		}
 		// Unknown escape or SS3 key: consume it without interpreting reply bytes
@@ -280,6 +264,10 @@ func terminalLine(s string, cols int) string {
 }
 
 func view(o options, initial []byte, fonts *fontSet) error {
+	return viewWithOpener(o, initial, fonts, openExternalURL)
+}
+
+func viewWithOpener(o options, initial []byte, fonts *fontSet, openURL func(context.Context, string) error) error {
 	fd := int(os.Stdin.Fd())
 	if !term.IsTerminal(fd) || !term.IsTerminal(int(os.Stdout.Fd())) {
 		return fmt.Errorf("view --in-place は対話端末で実行してください")
@@ -304,15 +292,16 @@ func view(o options, initial []byte, fonts *fontSet) error {
 		for _, id := range dotIDs {
 			deleteImage(os.Stdout, id)
 		}
-		fmt.Fprint(os.Stdout, "\x1b[?1000l\x1b[?1006l\x1b[?25h\x1b[0m\x1b[?1049l")
+		fmt.Fprint(os.Stdout, viewerInputDisable, "\x1b[?25h\x1b[0m\x1b[?1049l")
 		term.Restore(fd, old)
 	}()
-	fmt.Fprint(os.Stdout, "\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1006h\x1b[2J")
+	fmt.Fprint(os.Stdout, "\x1b[?1049h\x1b[?25l\x1b[2J", viewerInputEnable)
 	fmt.Fprintf(os.Stdout, "\x1b_Ga=q,i=%d,s=1,v=1,f=24;AAAA\x1b\\", graphicsQueryID)
 	if o.theme == "terminal" {
 		fmt.Fprint(os.Stdout, terminalColorQuery)
 	}
 	decoder := &inputDecoder{}
+	var links linkInput
 	colors := paletteFor(o.theme)
 	fg, bg, accent := colors.fg, colors.bg, colors.accent
 	gotFG, gotBG, supported := false, false, false
@@ -353,6 +342,7 @@ func view(o options, initial []byte, fonts *fontSet) error {
 			return err
 		}
 		for _, e := range events {
+			links.observe(e)
 			if e.kind == "quit" {
 				return nil
 			}
@@ -389,6 +379,8 @@ func view(o options, initial []byte, fonts *fontSet) error {
 	ready := false
 	var currentVersion uint64
 	var base *image.RGBA
+	opened := make(chan error, 1)
+	opening := false
 	animationStart, nextAnimation := time.Now(), time.Time{}
 	redrawDots := func() error {
 		tiles := doc.animationTiles(base, offset, size.cols, size.rows-2, time.Since(animationStart).Seconds())
@@ -413,6 +405,16 @@ func view(o options, initial []byte, fonts *fontSet) error {
 		select {
 		case <-ctx.Done():
 			return nil
+		default:
+		}
+		select {
+		case err := <-opened:
+			opening = false
+			status = "リンクをブラウザへ渡しました"
+			if err != nil {
+				status = "リンクを開けません: " + err.Error()
+			}
+			dirty = true
 		default:
 		}
 		select {
@@ -465,6 +467,7 @@ func view(o options, initial []byte, fonts *fontSet) error {
 		bodyHeight := (size.rows - 2) * size.height / size.rows
 		offset = max(0, min(offset, max(0, doc.height-bodyHeight)))
 		if dirty {
+			links.cancel()
 			base = doc.paintBase(offset, bodyHeight)
 			previous := imageID
 			imageID = nextImageID()
@@ -479,7 +482,11 @@ func view(o options, initial []byte, fonts *fontSet) error {
 			if err = redrawDots(); err != nil {
 				return err
 			}
-			fmt.Fprintf(os.Stdout, "\x1b[1;1H\x1b[2K%s\x1b[%d;1H\x1b[2K%s", terminalLine(filepathBase(o.file), size.cols), size.rows, terminalLine(fmt.Sprintf("%s  %d/%d  q:終了 r:再読込", status, offset, max(0, doc.height-bodyHeight)), size.cols))
+			linkHelp := "リンク操作:非対応"
+			if links.capable() {
+				linkHelp = "Cmd+クリック:リンク"
+			}
+			fmt.Fprintf(os.Stdout, "\x1b[1;1H\x1b[2K%s\x1b[%d;1H\x1b[2K%s", terminalLine(filepathBase(o.file), size.cols), size.rows, terminalLine(fmt.Sprintf("%s  %d/%d  q:終了 r:再読込 %s", status, offset, max(0, doc.height-bodyHeight), linkHelp), size.cols))
 			dirty = false
 			if !ready {
 				if err = reportReady(); err != nil {
@@ -501,7 +508,28 @@ func view(o options, initial []byte, fonts *fontSet) error {
 			return err
 		}
 		for _, ev := range events {
+			wasCapable := links.capable()
+			links.observe(ev)
+			if links.capable() != wasCapable {
+				dirty = true
+			}
 			switch ev.kind {
+			case "mouse":
+				// Do not hit-test a layout or scroll position that has not been
+				// painted yet, or a click queued across a terminal resize.
+				currentSize, sizeErr := getSize(fd)
+				if dirty || needLayout || opening || sizeErr != nil || currentSize != size {
+					links.cancel()
+					continue
+				}
+				if target := links.click(ev, size, doc, offset); target != "" {
+					opening = true
+					go func() {
+						openCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+						defer cancel()
+						opened <- openURL(openCtx, target)
+					}()
+				}
 			case "quit":
 				return nil
 			case "color":

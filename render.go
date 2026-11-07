@@ -71,6 +71,7 @@ type textStyle struct {
 	bold, code, underline, strike bool
 	ink                           color.RGBA
 	baseline, lineHeight          int
+	link                          int // index into document.linkTargets; zero means no link
 }
 type paintOp struct {
 	rect     image.Rectangle
@@ -87,6 +88,8 @@ type document struct {
 	fonts         *fontSet
 	colors        palette
 	dots          []workingDots
+	linkTargets   []string
+	links         []linkRegion
 }
 type layout struct {
 	doc          *document
@@ -139,6 +142,7 @@ func layoutMarkdown(source []byte, path string, width int, scale float64, fonts 
 		return nil, l.err
 	}
 	l.doc.height = max(1, l.y+pad)
+	l.doc.collectLinks()
 	return l.doc, nil
 }
 func (l *layout) normal() textStyle { return textStyle{size: l.size, ink: l.doc.colors.fg} }
@@ -217,14 +221,10 @@ func (l *layout) inlineParts(parent ast.Node, st textStyle) []inlinePart {
 			next.code = true
 			parts = append(parts, l.inlineParts(n, next)...)
 		case *ast.Link:
-			next := st
-			next.underline = true
-			next.ink = l.doc.colors.accent
+			next := l.linkStyle(st, decoded(v.Destination))
 			parts = append(parts, l.inlineParts(n, next)...)
 		case *ast.AutoLink:
-			next := st
-			next.underline = true
-			next.ink = l.doc.colors.accent
+			next := l.linkStyle(st, string(v.URL(l.source)))
 			parts = append(parts, inlinePart{text: string(v.Label(l.source)), style: next})
 		case *ast.Image:
 			parts = append(parts, inlinePart{image: v, style: st})
@@ -622,6 +622,8 @@ func (l *layout) table(t *ext.Table, left, right int) {
 }
 
 func (l *layout) imageBlock(n *ast.Image, left, right int, st textStyle) {
+	// Linked images, including their error placeholders, are not text links.
+	st.link = 0
 	alt := safeText(string(n.Text(l.source)))
 	img, err := l.localImage(string(n.Destination), max(1, right-left))
 	if err != nil {

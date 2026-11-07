@@ -111,7 +111,8 @@ def exercise(ending, supported=True):
                 started = time.monotonic()
                 path.write_text(SOURCE.replace("English", "Changed"))
                 os.utime(path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
-                wait_for(lambda d: "更新 ".encode() in d)
+                update_stamp = re.compile("更新 ".encode() + rb"\d{2}:\d{2}:\d{2}\.\d{3}")
+                wait_for(lambda d: bool(update_stamp.search(d)))
                 elapsed = time.monotonic() - started
                 print(f"PTY update ({len(SOURCE.encode())} bytes): {elapsed:.3f}s")
                 assert elapsed < 1.0, elapsed
@@ -120,9 +121,13 @@ def exercise(ending, supported=True):
                 os.write(master, b"g")
                 data.clear()
                 wait_for(lambda d: b"z=1,C=1,q=2" in d)
+                # The 'g' frame sends dot placements before its footer. A
+                # delayed footer still contains the previous update stamp and
+                # must not be mistaken for the completion update's redraw.
+                previous_stamps = set(update_stamp.findall(history))
                 data.clear()
                 path.write_text(SOURCE.replace("English", "Changed").replace("[~]", "[x]"))
-                wait_for(lambda d: "更新 ".encode() in d)
+                wait_for(lambda d: bool(set(update_stamp.findall(d)) - previous_stamps))
                 until = time.monotonic() + 0.2
                 while time.monotonic() < until:
                     pump()
