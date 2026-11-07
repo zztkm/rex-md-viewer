@@ -22,6 +22,7 @@ import (
 )
 
 const graphicsQueryID = 2147483000
+const terminalColorQuery = "\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b]4;4;?\x1b\\"
 
 type terminalSize struct{ cols, rows, width, height int }
 
@@ -181,15 +182,20 @@ func pollInput(fd int, decoder *inputDecoder, timeout int) ([]inputEvent, error)
 	return decoder.feed(buf[:n]), nil
 }
 func parseColorReply(s string) (int, color.RGBA, bool) {
-	parts := strings.SplitN(s, ";", 2)
-	if len(parts) != 2 {
+	parts := strings.Split(s, ";")
+	code, raw := 0, ""
+	if len(parts) == 2 && (parts[0] == "10" || parts[0] == "11") {
+		code, _ = strconv.Atoi(parts[0])
+		raw = parts[1]
+	} else if len(parts) == 3 && parts[0] == "4" && parts[1] == "4" {
+		code, raw = 4, parts[2]
+	} else {
 		return 0, color.RGBA{}, false
 	}
-	code, err := strconv.Atoi(parts[0])
-	if err != nil || (code != 10 && code != 11) {
+	if !strings.HasPrefix(raw, "rgb:") {
 		return 0, color.RGBA{}, false
 	}
-	value := strings.TrimPrefix(parts[1], "rgb:")
+	value := strings.TrimPrefix(raw, "rgb:")
 	rgb := strings.Split(value, "/")
 	if len(rgb) != 3 {
 		return 0, color.RGBA{}, false
@@ -280,26 +286,31 @@ func view(o options, initial []byte, fonts *fontSet) error {
 	fmt.Fprint(os.Stdout, "\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1006h\x1b[2J")
 	fmt.Fprintf(os.Stdout, "\x1b_Ga=q,i=%d,s=1,v=1,f=24;AAAA\x1b\\", graphicsQueryID)
 	if o.theme == "terminal" {
-		fmt.Fprint(os.Stdout, "\x1b]10;?\x1b\\\x1b]11;?\x1b\\")
+		fmt.Fprint(os.Stdout, terminalColorQuery)
 	}
 	decoder := &inputDecoder{}
 	colors := paletteFor(o.theme)
-	fg, bg := colors.fg, colors.bg
+	fg, bg, accent := colors.fg, colors.bg, colors.accent
 	gotFG, gotBG, supported := false, false, false
+	gotAccent := false
 	handleColor := func(value string) bool {
 		code, c, ok := parseColorReply(value)
 		if !ok || o.theme != "terminal" {
 			return false
 		}
-		if code == 10 {
-			fg = c
-			gotFG = true
-		} else {
-			bg = c
-			gotBG = true
+		switch code {
+		case 10:
+			fg, gotFG = c, true
+		case 11:
+			bg, gotBG = c, true
+		case 4:
+			accent, gotAccent = c, true
 		}
 		if gotFG && gotBG {
 			next := makePalette(bg, fg)
+			if gotAccent {
+				next = next.withAccent(accent)
+			}
 			changed := next != colors
 			colors = next
 			return changed
@@ -389,7 +400,7 @@ func view(o options, initial []byte, fonts *fontSet) error {
 			dirty = true
 		}
 		if o.theme == "terminal" && time.Now().After(nextTheme) {
-			fmt.Fprint(os.Stdout, "\x1b]10;?\x1b\\\x1b]11;?\x1b\\")
+			fmt.Fprint(os.Stdout, terminalColorQuery)
 			nextTheme = time.Now().Add(2 * time.Second)
 		}
 		if needLayout {

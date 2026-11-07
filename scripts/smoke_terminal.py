@@ -17,7 +17,7 @@ import time
 
 BINARY = str(Path(sys.argv[1] if len(sys.argv) > 1 else "bin/rex-md-viewer").resolve())
 QUERY = b"i=2147483000"
-SOURCE = "# 日本語\n\n" + "日本語の本文と English **bold**.\n\n" * 2000
+SOURCE = "# 日本語\n\n- [ ] 未完了\n- [x] 完了\n\n" + "日本語の本文と English **bold**.\n\n" * 2000
 
 
 def exercise(ending, supported=True):
@@ -49,6 +49,7 @@ def exercise(ending, supported=True):
                 if supported:
                     os.write(master, b"\x1b_Gi=2147483000;OK\x1b\\")
                     os.write(master, b"\x1b]10;rgb:eeee/eeee/eeee\x1b\\\x1b]11;rgb:1111/1111/1111\x1b\\")
+                    os.write(master, b"\x1b]4;4;rgb:3030/6060/bbbb\x1b\\")
 
         def wait_for(predicate, timeout=6):
             deadline = time.monotonic() + timeout

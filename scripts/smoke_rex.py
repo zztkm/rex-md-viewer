@@ -27,7 +27,7 @@ def focused():
 
 with tempfile.TemporaryDirectory(prefix="rex-md-smoke-") as temp:
     file = Path(temp) / "日本語 ' ${x}; $(not-a-command).md"
-    source = "# 日本語\n\n" + "日本語の本文と English **bold**.\n\n" * 1500
+    source = "# 日本語\n\n- [ ] 未完了\n- [x] 完了\n\n" + "日本語の本文と English **bold**.\n\n" * 1500
     file.write_text(source)
     env = dict(os.environ, XDG_STATE_HOME=str(Path(temp) / "state home"))
 

@@ -33,36 +33,48 @@ const maxGlyphs = 1_000_000
 
 // Layout retains drawing commands, not a full-height bitmap. A viewer only
 // allocates a bitmap for the visible viewport, even for a long document.
-type palette struct{ bg, fg, muted, accent, panel, line color.RGBA }
+type palette struct {
+	bg, fg, muted, accent, panel, line         color.RGBA
+	taskFrame, taskDone, taskAccent, taskCheck color.RGBA
+}
 
 func paletteFor(theme string) palette {
 	if theme == "light" {
-		return makePalette(color.RGBA{250, 250, 252, 255}, color.RGBA{32, 36, 44, 255})
+		p := makePalette(color.RGBA{250, 250, 252, 255}, color.RGBA{32, 36, 44, 255})
+		p.taskFrame, p.taskDone = color.RGBA{193, 195, 198, 255}, color.RGBA{150, 153, 158, 255}
+		return p
 	}
-	return makePalette(color.RGBA{25, 28, 35, 255}, color.RGBA{222, 226, 234, 255})
+	p := makePalette(color.RGBA{25, 28, 35, 255}, color.RGBA{222, 226, 234, 255})
+	p.taskFrame, p.taskDone = color.RGBA{96, 99, 105, 255}, color.RGBA{128, 131, 137, 255}
+	return p
 }
 func mix(a, b color.RGBA, n int) color.RGBA {
 	return color.RGBA{uint8((int(a.R)*(100-n) + int(b.R)*n) / 100), uint8((int(a.G)*(100-n) + int(b.G)*n) / 100), uint8((int(a.B)*(100-n) + int(b.B)*n) / 100), 255}
 }
 func makePalette(bg, fg color.RGBA) palette {
-	accent := color.RGBA{85, 150, 240, 255}
-	if int(bg.R)+int(bg.G)+int(bg.B) > 450 {
-		accent = color.RGBA{30, 95, 185, 255}
+	accent := color.RGBA{49, 95, 189, 255}
+	frameMix, doneMix := 74, 56
+	if luminance(bg) < 0.18 {
+		accent = color.RGBA{84, 136, 238, 255}
+		frameMix, doneMix = 62, 48
 	}
-	return palette{bg: bg, fg: fg, muted: mix(bg, fg, 60), accent: accent, panel: mix(bg, fg, 7), line: mix(bg, fg, 22)}
+	p := palette{bg: bg, fg: fg, muted: mix(bg, fg, 60), panel: mix(bg, fg, 7), line: mix(bg, fg, 22), taskFrame: mix(fg, bg, frameMix), taskDone: mix(fg, bg, doneMix)}
+	return p.withAccent(accent)
 }
 
 type textStyle struct {
 	size                          int
 	bold, code, underline, strike bool
 	ink                           color.RGBA
+	baseline, lineHeight          int
 }
 type paintOp struct {
-	rect    image.Rectangle
-	ink     color.RGBA
-	text    string
-	style   textStyle
-	picture image.Image
+	rect     image.Rectangle
+	ink      color.RGBA
+	text     string
+	style    textStyle
+	picture  image.Image
+	checkbox *bool
 }
 type document struct {
 	width, height int
@@ -75,6 +87,7 @@ type layout struct {
 	source       []byte
 	baseDir      string
 	y, size, gap int
+	scale        float64
 	images       map[string]image.Image
 	imagePixels  int64
 	err          error
@@ -106,7 +119,7 @@ func layoutMarkdown(source []byte, path string, width int, scale float64, fonts 
 	// Normalize only the rendering input; the monitor compares original bytes.
 	source = bytes.ReplaceAll(source, []byte("\r\n"), []byte("\n"))
 	source = bytes.ReplaceAll(source, []byte("\r"), []byte("\n"))
-	l := &layout{doc: &document{width: width, fonts: fonts, colors: colors}, source: source, baseDir: filepath.Dir(path), size: max(1, int(16*scale)), gap: max(1, int(10*scale)), images: make(map[string]image.Image)}
+	l := &layout{doc: &document{width: width, fonts: fonts, colors: colors}, source: source, baseDir: filepath.Dir(path), scale: scale, size: max(1, int(16*scale)), gap: max(1, int(10*scale)), images: make(map[string]image.Image)}
 	pad := min(max(1, int(28*scale)), width/12)
 	l.y = pad
 	parser := goldmark.New(goldmark.WithExtensions(extension.Table, extension.TaskList, extension.Strikethrough, extension.Linkify))
@@ -143,7 +156,14 @@ func (l *layout) glyph(s string, x, y int, st textStyle, width int) {
 		l.err = fmt.Errorf("日本語文字 %q (U+%04X) を描画できません。--font または %s に日本語対応フォントを指定してください", r, r, fontEnv)
 		return
 	}
-	l.addOp(paintOp{rect: image.Rect(x, y, x+width, y+st.size*2), text: s, style: st})
+	height := st.size * 2
+	if st.baseline > 0 {
+		height = max(height, st.baseline+max(3, st.size))
+		if st.code && st.lineHeight > 0 {
+			height = max(height, max(0, st.baseline-st.size)+st.lineHeight)
+		}
+	}
+	l.addOp(paintOp{rect: image.Rect(x, y, x+width, y+height), text: s, style: st})
 }
 func (l *layout) face(st textStyle, r rune) font.Face {
 	return l.doc.fonts.runeFace(st.size, st.bold, st.code && r < 128, r)
@@ -238,10 +258,17 @@ func splitWords(s string) []string {
 }
 
 func (l *layout) inline(parts []inlinePart, left, right int, alignment ext.Alignment) {
+	l.inlineWithLineHeight(parts, left, right, alignment, 0)
+}
+func (l *layout) inlineWithLineHeight(parts []inlinePart, left, right int, alignment ext.Alignment, fixedHeight int) {
 	left = min(left, l.doc.width-1)
 	right = max(left+1, min(right, l.doc.width))
 	x, lineTop := left, l.y
-	lineHeight := max(1, l.size*3/2)
+	baseHeight := max(1, l.size*3/2)
+	if fixedHeight > 0 {
+		baseHeight = fixedHeight
+	}
+	lineHeight := baseHeight
 	lineStart := len(l.doc.ops)
 	alignLine := func() {
 		shift := 0
@@ -261,7 +288,7 @@ func (l *layout) inline(parts []inlinePart, left, right int, alignment ext.Align
 		l.y = lineTop + lineHeight
 		lineTop = l.y
 		x = left
-		lineHeight = max(1, l.size*3/2)
+		lineHeight = baseHeight
 		lineStart = len(l.doc.ops)
 	}
 	for _, p := range parts {
@@ -278,13 +305,8 @@ func (l *layout) inline(parts []inlinePart, left, right int, alignment ext.Align
 			lineStart = len(l.doc.ops)
 			continue
 		}
+		// Task markers are rendered separately in the list's marker column.
 		if p.checkbox != nil {
-			sz := max(1, st.size*3/4)
-			if x+sz+max(1, st.size/2) > right && x > left {
-				newLine()
-			}
-			l.drawCheckbox(x, lineTop, st.size, *p.checkbox)
-			x += sz + max(1, st.size/2)
 			continue
 		}
 		for _, word := range splitWords(p.text) {
@@ -312,7 +334,11 @@ func (l *layout) inline(parts []inlinePart, left, right int, alignment ext.Align
 				if !st.code && r == ' ' && x == left {
 					continue
 				}
-				lineHeight = max(lineHeight, st.size*3/2)
+				if fixedHeight == 0 {
+					lineHeight = max(lineHeight, st.size*3/2)
+				} else {
+					lineHeight = max(lineHeight, st.size)
+				}
 				l.glyph(string(r), x, lineTop, st, cw)
 				x += cw
 			}
@@ -379,19 +405,11 @@ func (l *layout) block(n ast.Node, left, right int) {
 		l.blocks(n, left, right)
 	}
 }
-func (l *layout) drawCheckbox(x, top, size int, checked bool) {
-	sz := max(1, size*3/4)
-	y, border := top+size/4, max(1, size/12)
-	l.fill(image.Rect(x, y, x+sz, y+sz), l.doc.colors.accent)
-	if !checked {
-		l.fill(image.Rect(x+border, y+border, x+sz-border, y+sz-border), l.doc.colors.bg)
-	}
-}
-
 func (l *layout) listMarker(item ast.Node, ordered bool, number int, st textStyle) (string, *ext.TaskCheckBox, int) {
 	if first := item.FirstChild(); first != nil {
 		if check, ok := first.FirstChild().(*ext.TaskCheckBox); ok {
-			return "", check, max(1, st.size*3/4)
+			m := taskLayout(l.taskScale() * float64(st.size) / float64(l.size))
+			return "", check, m.box
 		}
 	}
 	label := "•"
@@ -409,11 +427,22 @@ func (l *layout) list(list *ast.List, left, right int) {
 	left = min(left, l.doc.width-1)
 	right = max(left+1, min(right, l.doc.width))
 	st := l.normal()
+	taskOnly := list.FirstChild() != nil
+	for item := list.FirstChild(); item != nil; item = item.NextSibling() {
+		_, check, _ := l.listMarker(item, list.IsOrdered(), 1, st)
+		if check == nil {
+			taskOnly = false
+			break
+		}
+	}
 	column, gap := 0, 0
 	// Measure a shared marker column instead of reserving two em regardless
 	// of marker width. Only shrink markers when the pane cannot fit them.
 	for {
 		column, gap = 0, max(1, st.size/2)
+		if taskOnly {
+			gap = taskLayout(l.taskScale() * float64(st.size) / float64(l.size)).gap
+		}
 		number := max(1, list.Start)
 		for item := list.FirstChild(); item != nil; item = item.NextSibling() {
 			_, _, width := l.listMarker(item, list.IsOrdered(), number, st)
@@ -437,7 +466,11 @@ func (l *layout) list(list *ast.List, left, right int) {
 		}
 		label, check, width := l.listMarker(item, list.IsOrdered(), number, st)
 		if check != nil {
-			l.drawCheckbox(left, l.y, st.size, check.IsChecked)
+			y := l.y
+			if !stacked {
+				y += max(0, (taskLayout(l.taskScale()).pitch-width)/2)
+			}
+			l.drawCheckbox(left, y, width, check.IsChecked)
 		} else {
 			x := left
 			if list.IsOrdered() {
@@ -452,24 +485,21 @@ func (l *layout) list(list *ast.List, left, right int) {
 			}
 		}
 		if stacked {
-			l.y += max(2, st.size*2)
+			if check != nil {
+				l.y += width + gap
+			} else {
+				l.y += max(2, st.size*2)
+			}
 		}
 		bodyTop := l.y
 		for block := item.FirstChild(); block != nil; block = block.NextSibling() {
 			if l.err != nil {
 				return
 			}
-			if check != nil && block == item.FirstChild() {
-				// The checkbox is already in the marker column. Lay out the
-				// remaining paragraph at the body column, including every wrap.
-				parts := l.inlineParts(block, l.normal())
-				if len(parts) > 0 && parts[0].checkbox != nil {
-					parts = parts[1:]
-				}
-				l.inline(parts, bodyLeft, right, 0)
-				if _, ok := block.(*ast.Paragraph); ok {
-					l.y += l.gap
-				}
+			_, paragraph := block.(*ast.Paragraph)
+			_, textBlock := block.(*ast.TextBlock)
+			if check != nil && (paragraph || textBlock) {
+				l.taskParagraph(block, bodyLeft, right, check.IsChecked, block == item.FirstChild())
 			} else {
 				l.block(block, bodyLeft, right)
 			}
@@ -626,9 +656,20 @@ func (l *layout) localImage(destination string, width int) (image.Image, error) 
 func (d *document) paint(offset, height int) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, d.width, max(1, height)))
 	draw.Draw(img, img.Bounds(), image.NewUniform(d.colors.bg), image.Point{}, draw.Src)
+	checkboxes := make(map[checkboxKey]*image.RGBA)
 	for _, op := range d.ops {
 		r := op.rect.Sub(image.Pt(0, offset))
 		if !r.Overlaps(img.Bounds()) {
+			continue
+		}
+		if op.checkbox != nil {
+			key := checkboxKey{size: r.Dx(), checked: *op.checkbox}
+			box := checkboxes[key]
+			if box == nil {
+				box = checkboxImage(key.size, key.checked, d.colors)
+				checkboxes[key] = box
+			}
+			draw.Draw(img, r, box, image.Point{}, draw.Over)
 			continue
 		}
 		if op.picture != nil {
@@ -642,9 +683,18 @@ func (d *document) paint(offset, height int) *image.RGBA {
 		st := op.style
 		ch := []rune(op.text)[0]
 		face := d.fonts.runeFace(st.size, st.bold, st.code && ch < 128, ch)
-		baseline := r.Min.Y + d.fonts.baseline(st.size)
+		baselineOffset := st.baseline
+		if baselineOffset == 0 {
+			baselineOffset = d.fonts.baseline(st.size)
+		}
+		baseline := r.Min.Y + baselineOffset
 		if st.code {
-			draw.Draw(img, image.Rect(r.Min.X, r.Min.Y, r.Max.X, r.Min.Y+st.size*3/2), image.NewUniform(d.colors.panel), image.Point{}, draw.Src)
+			top, height := r.Min.Y, st.size*3/2
+			if st.lineHeight > 0 {
+				top += max(0, baselineOffset-st.size)
+				height = st.lineHeight
+			}
+			draw.Draw(img, image.Rect(r.Min.X, top, r.Max.X, top+height), image.NewUniform(d.colors.panel), image.Point{}, draw.Src)
 		}
 		drawer := font.Drawer{Dst: img, Src: image.NewUniform(st.ink), Face: face, Dot: fixed.P(r.Min.X, baseline)}
 		drawer.DrawString(op.text)

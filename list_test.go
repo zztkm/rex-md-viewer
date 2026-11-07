@@ -32,7 +32,7 @@ func listGlyph(t *testing.T, doc *document, text string) paintOp {
 func listCheckboxes(doc *document) []paintOp {
 	var boxes []paintOp
 	for _, op := range doc.ops {
-		if op.text == "" && op.picture == nil && op.ink == doc.colors.accent {
+		if op.checkbox != nil {
 			boxes = append(boxes, op)
 		}
 	}
@@ -64,7 +64,7 @@ func TestListTaskMarkerAndNesting(t *testing.T) {
 		t.Fatal("nested marker does not begin at the parent text column")
 	}
 	for i, body := range []paintOp{first, nested, last} {
-		if gap := body.rect.Min.X - boxes[i].rect.Max.X; gap != 8 {
+		if gap := body.rect.Min.X - boxes[i].rect.Max.X; gap != 7 {
 			t.Fatalf("checkbox %d gap=%d", i, gap)
 		}
 	}
@@ -187,7 +187,7 @@ func TestListTaskGapScales(t *testing.T) {
 	if boxes[0].rect.Min.X != listGlyph(t, doc, "P").rect.Min.X {
 		t.Fatal("scaled task marker is indented")
 	}
-	if gap := listGlyph(t, doc, "A").rect.Min.X - boxes[0].rect.Max.X; gap != 16 {
+	if gap := listGlyph(t, doc, "A").rect.Min.X - boxes[0].rect.Max.X; gap != 13 {
 		t.Fatalf("scaled task gap=%d", gap)
 	}
 }

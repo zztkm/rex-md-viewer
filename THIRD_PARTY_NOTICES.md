@@ -7,6 +7,8 @@ Japanese system/user fonts are not bundled.
 
 Terminal graphics, font-selection, and pane-management design reference: https://github.com/almonk/rexpad
 
+Checkbox geometry, task colors, and spacing in task.go are adapted from rexpad's render.go.
+
 MIT License
 
 Copyright (c) 2026 Alasdair Monk

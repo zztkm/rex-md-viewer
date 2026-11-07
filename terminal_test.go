@@ -40,6 +40,21 @@ func TestParseColor(t *testing.T) {
 		}
 	}
 }
+func TestTerminalAccentColor(t *testing.T) {
+	code, c, ok := parseColorReply("4;4;rgb:1234/abcd/ffff")
+	if !ok || code != 4 || c != (color.RGBA{18, 171, 255, 255}) {
+		t.Fatalf("%d %v %t", code, c, ok)
+	}
+	for _, s := range []string{"4;1;rgb:ff/ff/ff", "4;4;red", "4;4;rgb:/00/00", "10;ff/ff/ff"} {
+		if _, _, ok := parseColorReply(s); ok {
+			t.Fatalf("accepted %q", s)
+		}
+	}
+	if !strings.Contains(terminalColorQuery, "]4;4;?") {
+		t.Fatal("terminal blue is not queried")
+	}
+}
+
 func TestTerminalLineSafe(t *testing.T) {
 	got := terminalLine("日本語\x1b[31m\nhello", 9)
 	if strings.Contains(got, "\x1b") || strings.Contains(got, "\n") {
