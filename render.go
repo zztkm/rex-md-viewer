@@ -1,0 +1,682 @@
+package main
+
+import (
+	"bytes"
+	"fmt"
+	"html"
+	"image"
+	"image/color"
+	"image/draw"
+	_ "image/gif"
+	_ "image/jpeg"
+	"image/png"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"unicode"
+
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/extension"
+	ext "github.com/yuin/goldmark/extension/ast"
+	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/util"
+	xdraw "golang.org/x/image/draw"
+	"golang.org/x/image/font"
+	"golang.org/x/image/math/fixed"
+)
+
+const maxRenderPixels = 32 << 20
+const maxImagePixels = 16 << 20
+const maxGlyphs = 1_000_000
+
+// Layout retains drawing commands, not a full-height bitmap. A viewer only
+// allocates a bitmap for the visible viewport, even for a long document.
+type palette struct{ bg, fg, muted, accent, panel, line color.RGBA }
+
+func paletteFor(theme string) palette {
+	if theme == "light" {
+		return makePalette(color.RGBA{250, 250, 252, 255}, color.RGBA{32, 36, 44, 255})
+	}
+	return makePalette(color.RGBA{25, 28, 35, 255}, color.RGBA{222, 226, 234, 255})
+}
+func mix(a, b color.RGBA, n int) color.RGBA {
+	return color.RGBA{uint8((int(a.R)*(100-n) + int(b.R)*n) / 100), uint8((int(a.G)*(100-n) + int(b.G)*n) / 100), uint8((int(a.B)*(100-n) + int(b.B)*n) / 100), 255}
+}
+func makePalette(bg, fg color.RGBA) palette {
+	accent := color.RGBA{85, 150, 240, 255}
+	if int(bg.R)+int(bg.G)+int(bg.B) > 450 {
+		accent = color.RGBA{30, 95, 185, 255}
+	}
+	return palette{bg: bg, fg: fg, muted: mix(bg, fg, 60), accent: accent, panel: mix(bg, fg, 7), line: mix(bg, fg, 22)}
+}
+
+type textStyle struct {
+	size                          int
+	bold, code, underline, strike bool
+	ink                           color.RGBA
+}
+type paintOp struct {
+	rect    image.Rectangle
+	ink     color.RGBA
+	text    string
+	style   textStyle
+	picture image.Image
+}
+type document struct {
+	width, height int
+	ops           []paintOp
+	fonts         *fontSet
+	colors        palette
+}
+type layout struct {
+	doc          *document
+	source       []byte
+	baseDir      string
+	y, size, gap int
+	images       map[string]image.Image
+	imagePixels  int64
+	err          error
+}
+type inlinePart struct {
+	text     string
+	style    textStyle
+	image    *ast.Image
+	checkbox *bool
+}
+
+func safeText(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' {
+			return r
+		}
+		if unicode.IsControl(r) {
+			return '\uFFFD'
+		}
+		return r
+	}, s)
+}
+
+func layoutMarkdown(source []byte, path string, width int, scale float64, fonts *fontSet, colors palette) (*document, error) {
+	if width < 1 || width > 8192 {
+		return nil, fmt.Errorf("描画幅は 1〜8192 ピクセルにしてください")
+	}
+	// CommonMark treats CRLF and CR as line endings, including inside code.
+	// Normalize only the rendering input; the monitor compares original bytes.
+	source = bytes.ReplaceAll(source, []byte("\r\n"), []byte("\n"))
+	source = bytes.ReplaceAll(source, []byte("\r"), []byte("\n"))
+	l := &layout{doc: &document{width: width, fonts: fonts, colors: colors}, source: source, baseDir: filepath.Dir(path), size: max(1, int(16*scale)), gap: max(1, int(10*scale)), images: make(map[string]image.Image)}
+	pad := min(max(1, int(28*scale)), width/12)
+	l.y = pad
+	parser := goldmark.New(goldmark.WithExtensions(extension.Table, extension.TaskList, extension.Strikethrough, extension.Linkify))
+	root := parser.Parser().Parse(text.NewReader(source))
+	if len(source) == 0 {
+		l.inline([]inlinePart{{text: "空のファイル", style: l.normal()}}, pad, width-pad, 0)
+	} else {
+		l.blocks(root, pad, width-pad)
+	}
+	if l.err != nil {
+		return nil, l.err
+	}
+	l.doc.height = max(1, l.y+pad)
+	return l.doc, nil
+}
+func (l *layout) normal() textStyle { return textStyle{size: l.size, ink: l.doc.colors.fg} }
+func (l *layout) addOp(op paintOp) bool {
+	if l.err != nil {
+		return false
+	}
+	if len(l.doc.ops) >= maxGlyphs {
+		l.err = fmt.Errorf("文書の描画要素が多すぎます（上限 %d）", maxGlyphs)
+		return false
+	}
+	l.doc.ops = append(l.doc.ops, op)
+	return true
+}
+func (l *layout) fill(r image.Rectangle, c color.RGBA) bool {
+	return l.addOp(paintOp{rect: r, ink: c})
+}
+func (l *layout) glyph(s string, x, y int, st textStyle, width int) {
+	r := []rune(s)[0]
+	if _, ok := l.doc.fonts.sourceFor(r, st.bold, st.code && r < 128); !ok && isJapanese(r) {
+		l.err = fmt.Errorf("日本語文字 %q (U+%04X) を描画できません。--font または %s に日本語対応フォントを指定してください", r, r, fontEnv)
+		return
+	}
+	l.addOp(paintOp{rect: image.Rect(x, y, x+width, y+st.size*2), text: s, style: st})
+}
+func (l *layout) face(st textStyle, r rune) font.Face {
+	return l.doc.fonts.runeFace(st.size, st.bold, st.code && r < 128, r)
+}
+func (l *layout) charWidth(r rune, st textStyle) int {
+	advance, ok := l.face(st, r).GlyphAdvance(r)
+	if !ok {
+		return max(1, st.size)
+	}
+	return max(0, advance.Ceil())
+}
+
+func decoded(s []byte) string { return html.UnescapeString(string(util.UnescapePunctuations(s))) }
+func (l *layout) inlineParts(parent ast.Node, st textStyle) []inlinePart {
+	var parts []inlinePart
+	for n := parent.FirstChild(); n != nil; n = n.NextSibling() {
+		switch v := n.(type) {
+		case *ast.Text:
+			s := string(v.Segment.Value(l.source))
+			if !v.IsRaw() {
+				s = decoded([]byte(s))
+			}
+			parts = append(parts, inlinePart{text: s, style: st})
+			if v.HardLineBreak() {
+				parts = append(parts, inlinePart{text: "\n", style: st})
+			} else if v.SoftLineBreak() {
+				parts = append(parts, inlinePart{text: " ", style: st})
+			}
+		case *ast.String:
+			parts = append(parts, inlinePart{text: string(v.Value), style: st})
+		case *ast.Emphasis:
+			next := st
+			if v.Level == 2 {
+				next.bold = true
+			} else {
+				next.underline = true
+			}
+			parts = append(parts, l.inlineParts(n, next)...)
+		case *ext.Strikethrough:
+			next := st
+			next.strike = true
+			parts = append(parts, l.inlineParts(n, next)...)
+		case *ast.CodeSpan:
+			next := st
+			next.code = true
+			parts = append(parts, l.inlineParts(n, next)...)
+		case *ast.Link:
+			next := st
+			next.underline = true
+			next.ink = l.doc.colors.accent
+			parts = append(parts, l.inlineParts(n, next)...)
+		case *ast.AutoLink:
+			next := st
+			next.underline = true
+			next.ink = l.doc.colors.accent
+			parts = append(parts, inlinePart{text: string(v.Label(l.source)), style: next})
+		case *ast.Image:
+			parts = append(parts, inlinePart{image: v, style: st})
+		case *ext.TaskCheckBox:
+			checked := v.IsChecked
+			parts = append(parts, inlinePart{checkbox: &checked, style: st})
+		case *ast.RawHTML:
+			parts = append(parts, inlinePart{text: string(v.Segments.Value(l.source)), style: st})
+		default:
+			parts = append(parts, l.inlineParts(n, st)...)
+		}
+	}
+	return parts
+}
+
+// Words stay together when they fit. CJK characters remain individual break
+// opportunities. Very long words and code lines wrap by rune, without loss.
+func splitWords(s string) []string {
+	var words []string
+	var word strings.Builder
+	flush := func() {
+		if word.Len() > 0 {
+			words = append(words, word.String())
+			word.Reset()
+		}
+	}
+	for _, r := range safeText(s) {
+		if r < 128 && !unicode.IsSpace(r) {
+			word.WriteRune(r)
+		} else {
+			flush()
+			words = append(words, string(r))
+		}
+	}
+	flush()
+	return words
+}
+
+func (l *layout) inline(parts []inlinePart, left, right int, alignment ext.Alignment) {
+	left = min(left, l.doc.width-1)
+	right = max(left+1, min(right, l.doc.width))
+	x, lineTop := left, l.y
+	lineHeight := max(1, l.size*3/2)
+	lineStart := len(l.doc.ops)
+	alignLine := func() {
+		shift := 0
+		if alignment == ext.AlignCenter {
+			shift = (right - x) / 2
+		} else if alignment == ext.AlignRight {
+			shift = right - x
+		}
+		if shift > 0 {
+			for i := lineStart; i < len(l.doc.ops); i++ {
+				l.doc.ops[i].rect = l.doc.ops[i].rect.Add(image.Pt(shift, 0))
+			}
+		}
+	}
+	newLine := func() {
+		alignLine()
+		l.y = lineTop + lineHeight
+		lineTop = l.y
+		x = left
+		lineHeight = max(1, l.size*3/2)
+		lineStart = len(l.doc.ops)
+	}
+	for _, p := range parts {
+		st := p.style
+		st.size = min(st.size, max(1, right-left))
+		if p.image != nil {
+			if x != left {
+				newLine()
+			}
+			l.y = lineTop
+			l.imageBlock(p.image, left, right, st)
+			lineTop = l.y
+			x = left
+			lineStart = len(l.doc.ops)
+			continue
+		}
+		if p.checkbox != nil {
+			sz := max(1, st.size*3/4)
+			if x+sz+max(1, st.size/2) > right && x > left {
+				newLine()
+			}
+			l.drawCheckbox(x, lineTop, st.size, *p.checkbox)
+			x += sz + max(1, st.size/2)
+			continue
+		}
+		for _, word := range splitWords(p.text) {
+			if word == "\n" {
+				newLine()
+				continue
+			}
+			if word == "\t" {
+				word = "    "
+			}
+			w := 0
+			for _, r := range word {
+				w += l.charWidth(r, st)
+			}
+			if x > left && x+w > right && w <= right-left {
+				newLine()
+			}
+			for _, r := range word {
+				cw := l.charWidth(r, st)
+				if x+cw > right && x > left {
+					newLine()
+				}
+				// Normal prose does not carry a separator space onto the next
+				// line. Code keeps its literal leading whitespace.
+				if !st.code && r == ' ' && x == left {
+					continue
+				}
+				lineHeight = max(lineHeight, st.size*3/2)
+				l.glyph(string(r), x, lineTop, st, cw)
+				x += cw
+			}
+		}
+	}
+	if x > left || l.y == lineTop {
+		alignLine()
+		l.y = lineTop + lineHeight
+	}
+}
+
+func (l *layout) blocks(parent ast.Node, left, right int) {
+	for n := parent.FirstChild(); n != nil; n = n.NextSibling() {
+		if l.err != nil {
+			return
+		}
+		l.block(n, left, right)
+	}
+}
+func (l *layout) block(n ast.Node, left, right int) {
+	st := l.normal()
+	switch v := n.(type) {
+	case *ast.Heading:
+		l.y += l.gap
+		sizes := []float64{2, 1.65, 1.4, 1.2, 1.08, 1}
+		st.size = max(1, int(float64(l.size)*sizes[v.Level-1]))
+		st.bold = true
+		l.inline(l.inlineParts(n, st), left, right, 0)
+		l.y += l.gap
+		if v.Level <= 2 {
+			l.fill(image.Rect(left, l.y, right, l.y+1), l.doc.colors.line)
+			l.y += l.gap
+		}
+	case *ast.Paragraph, *ast.TextBlock:
+		l.inline(l.inlineParts(n, st), left, right, 0)
+		if _, ok := n.(*ast.Paragraph); ok {
+			l.y += l.gap
+		}
+	case *ast.Blockquote:
+		top := l.y
+		indent := min(l.size, right-left-1)
+		l.blocks(n, left+max(0, indent), right)
+		l.fill(image.Rect(left, top, left+max(1, l.size/6), l.y), l.doc.colors.line)
+		l.y += l.gap
+	case *ast.List:
+		l.list(v, left, right)
+	case *ast.FencedCodeBlock, *ast.CodeBlock:
+		var b strings.Builder
+		lines := n.Lines()
+		for i := 0; i < lines.Len(); i++ {
+			seg := lines.At(i)
+			b.Write(seg.Value(l.source))
+		}
+		l.code(strings.TrimSuffix(b.String(), "\n"), left, right)
+	case *ast.HTMLBlock:
+		l.code(string(v.Text(l.source)), left, right)
+	case *ast.ThematicBreak:
+		l.y += l.gap
+		l.fill(image.Rect(left, l.y, right, l.y+max(1, l.size/12)), l.doc.colors.line)
+		l.y += l.gap * 2
+	case *ext.Table:
+		l.table(v, left, right)
+	default:
+		l.blocks(n, left, right)
+	}
+}
+func (l *layout) drawCheckbox(x, top, size int, checked bool) {
+	sz := max(1, size*3/4)
+	y, border := top+size/4, max(1, size/12)
+	l.fill(image.Rect(x, y, x+sz, y+sz), l.doc.colors.accent)
+	if !checked {
+		l.fill(image.Rect(x+border, y+border, x+sz-border, y+sz-border), l.doc.colors.bg)
+	}
+}
+
+func (l *layout) listMarker(item ast.Node, ordered bool, number int, st textStyle) (string, *ext.TaskCheckBox, int) {
+	if first := item.FirstChild(); first != nil {
+		if check, ok := first.FirstChild().(*ext.TaskCheckBox); ok {
+			return "", check, max(1, st.size*3/4)
+		}
+	}
+	label := "•"
+	if ordered {
+		label = fmt.Sprintf("%d.", number)
+	}
+	width := 0
+	for _, r := range label {
+		width += l.charWidth(r, st)
+	}
+	return label, nil, width
+}
+
+func (l *layout) list(list *ast.List, left, right int) {
+	left = min(left, l.doc.width-1)
+	right = max(left+1, min(right, l.doc.width))
+	st := l.normal()
+	column, gap := 0, 0
+	// Measure a shared marker column instead of reserving two em regardless
+	// of marker width. Only shrink markers when the pane cannot fit them.
+	for {
+		column, gap = 0, max(1, st.size/2)
+		number := max(1, list.Start)
+		for item := list.FirstChild(); item != nil; item = item.NextSibling() {
+			_, _, width := l.listMarker(item, list.IsOrdered(), number, st)
+			column = max(column, width)
+			number++
+		}
+		if column+gap < right-left || st.size == 1 {
+			break
+		}
+		st.size--
+	}
+	bodyLeft := left + column + gap
+	stacked := bodyLeft >= right
+	if stacked {
+		bodyLeft = left
+	}
+	number := max(1, list.Start)
+	for item := list.FirstChild(); item != nil; item = item.NextSibling() {
+		if l.err != nil {
+			return
+		}
+		label, check, width := l.listMarker(item, list.IsOrdered(), number, st)
+		if check != nil {
+			l.drawCheckbox(left, l.y, st.size, check.IsChecked)
+		} else {
+			x := left
+			if list.IsOrdered() {
+				x += column - width
+			}
+			// Markers never use the wrapping inline layout. Multi-digit numbers
+			// stay on the same row, right-aligned within the shared column.
+			for _, r := range label {
+				w := l.charWidth(r, st)
+				l.glyph(string(r), x, l.y, st, w)
+				x += w
+			}
+		}
+		if stacked {
+			l.y += max(2, st.size*2)
+		}
+		bodyTop := l.y
+		for block := item.FirstChild(); block != nil; block = block.NextSibling() {
+			if l.err != nil {
+				return
+			}
+			if check != nil && block == item.FirstChild() {
+				// The checkbox is already in the marker column. Lay out the
+				// remaining paragraph at the body column, including every wrap.
+				parts := l.inlineParts(block, l.normal())
+				if len(parts) > 0 && parts[0].checkbox != nil {
+					parts = parts[1:]
+				}
+				l.inline(parts, bodyLeft, right, 0)
+				if _, ok := block.(*ast.Paragraph); ok {
+					l.y += l.gap
+				}
+			} else {
+				l.block(block, bodyLeft, right)
+			}
+		}
+		if l.y == bodyTop {
+			l.y += max(1, l.size*3/2)
+		}
+		number++
+	}
+	l.y += l.gap
+}
+
+func (l *layout) code(s string, left, right int) {
+	top, index := l.y, len(l.doc.ops)
+	if !l.fill(image.Rect(left, top, right, top), l.doc.colors.panel) {
+		return
+	}
+	pad := min(l.gap, max(0, (right-left-1)/4))
+	l.y += pad
+	st := l.normal()
+	st.code = true
+	l.inline([]inlinePart{{text: s, style: st}}, left+pad, right-pad, 0)
+	l.y += pad
+	l.doc.ops[index].rect.Max.Y = l.y
+	l.y += l.gap
+}
+
+func (l *layout) table(t *ext.Table, left, right int) {
+	cols := len(t.Alignments)
+	if cols == 0 {
+		return
+	}
+	// Cells always stay inside their column; font size adapts to very narrow cells.
+	for row := t.FirstChild(); row != nil; row = row.NextSibling() {
+		top := l.y
+		bottom := top
+		col := 0
+		_, header := row.(*ext.TableHeader)
+		for cell := row.FirstChild(); cell != nil; cell = cell.NextSibling() {
+			x1 := left + (right-left)*col/cols
+			x2 := left + (right-left)*(col+1)/cols
+			start := len(l.doc.ops)
+			bg := l.doc.colors.bg
+			if header {
+				bg = l.doc.colors.panel
+			}
+			if !l.fill(image.Rect(x1, top, x2, top), bg) {
+				return
+			}
+			pad := min(l.gap, max(0, (x2-x1-1)/4))
+			l.y = top + pad
+			st := l.normal()
+			st.bold = header
+			alignment := ext.AlignLeft
+			if c, ok := cell.(*ext.TableCell); ok {
+				alignment = c.Alignment
+			}
+			l.inline(l.inlineParts(cell, st), x1+pad, x2-pad, alignment)
+			l.y += pad
+			bottom = max(bottom, l.y)
+			// Background is extended after every cell's height is known.
+			l.doc.ops[start].rect.Max.Y = -1
+			col++
+		}
+		for i := len(l.doc.ops) - 1; i >= 0; i-- {
+			op := &l.doc.ops[i]
+			if op.rect.Min.Y < top {
+				break
+			}
+			if op.rect.Max.Y == -1 {
+				op.rect.Max.Y = bottom
+			}
+		}
+		for i := 0; i <= cols; i++ {
+			x := left + (right-left)*i/cols
+			l.fill(image.Rect(x, top, x+1, bottom), l.doc.colors.line)
+		}
+		l.fill(image.Rect(left, top, right, top+1), l.doc.colors.line)
+		l.fill(image.Rect(left, bottom-1, right, bottom), l.doc.colors.line)
+		l.y = bottom
+	}
+	l.y += l.gap
+}
+
+func (l *layout) imageBlock(n *ast.Image, left, right int, st textStyle) {
+	alt := safeText(string(n.Text(l.source)))
+	img, err := l.localImage(string(n.Destination), max(1, right-left))
+	if err != nil {
+		st.ink = l.doc.colors.muted
+		l.inline([]inlinePart{{text: fmt.Sprintf("[画像: %s] %s", alt, err), style: st}}, left, right, 0)
+		return
+	}
+	r := image.Rect(left, l.y, left+img.Bounds().Dx(), l.y+img.Bounds().Dy())
+	l.addOp(paintOp{rect: r, picture: img})
+	l.y = r.Max.Y + l.gap
+}
+func (l *layout) localImage(destination string, width int) (image.Image, error) {
+	u, err := url.Parse(html.UnescapeString(destination))
+	if err != nil {
+		return nil, fmt.Errorf("不正なパス")
+	}
+	if u.Scheme != "" || u.Host != "" || strings.HasPrefix(destination, "//") {
+		return nil, fmt.Errorf("リモート画像は未対応")
+	}
+	path := u.Path
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(l.baseDir, path)
+	}
+	key := fmt.Sprintf("%s:%d", path, width)
+	if cached := l.images[key]; cached != nil {
+		return cached, nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("読み込み失敗: %s", safeText(err.Error()))
+	}
+	if !info.Mode().IsRegular() || info.Size() > 32<<20 {
+		return nil, fmt.Errorf("画像ファイルが大きすぎるか通常ファイルではありません")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	cfg, format, err := image.DecodeConfig(f)
+	if err != nil {
+		return nil, fmt.Errorf("未対応形式または破損した画像")
+	}
+	if format != "png" && format != "jpeg" && format != "gif" {
+		return nil, fmt.Errorf("未対応の画像形式")
+	}
+	pixels := int64(cfg.Width) * int64(cfg.Height)
+	if cfg.Width < 1 || cfg.Height < 1 || pixels > maxImagePixels || l.imagePixels+pixels > maxRenderPixels {
+		return nil, fmt.Errorf("画像の画素数が上限を超えています")
+	}
+	if _, err = f.Seek(0, 0); err != nil {
+		return nil, err
+	}
+	img, _, err := image.Decode(f)
+	if err != nil {
+		return nil, fmt.Errorf("画像のデコードに失敗")
+	}
+	if img.Bounds().Dx() > width {
+		h := max(1, img.Bounds().Dy()*width/img.Bounds().Dx())
+		scaled := image.NewRGBA(image.Rect(0, 0, width, h))
+		xdraw.CatmullRom.Scale(scaled, scaled.Bounds(), img, img.Bounds(), draw.Over, nil)
+		img = scaled
+	}
+	l.imagePixels += pixels
+	l.images[key] = img
+	return img, nil
+}
+
+func (d *document) paint(offset, height int) *image.RGBA {
+	img := image.NewRGBA(image.Rect(0, 0, d.width, max(1, height)))
+	draw.Draw(img, img.Bounds(), image.NewUniform(d.colors.bg), image.Point{}, draw.Src)
+	for _, op := range d.ops {
+		r := op.rect.Sub(image.Pt(0, offset))
+		if !r.Overlaps(img.Bounds()) {
+			continue
+		}
+		if op.picture != nil {
+			draw.Draw(img, r, op.picture, op.picture.Bounds().Min, draw.Over)
+			continue
+		}
+		if op.text == "" {
+			draw.Draw(img, r, image.NewUniform(op.ink), image.Point{}, draw.Src)
+			continue
+		}
+		st := op.style
+		ch := []rune(op.text)[0]
+		face := d.fonts.runeFace(st.size, st.bold, st.code && ch < 128, ch)
+		baseline := r.Min.Y + d.fonts.baseline(st.size)
+		if st.code {
+			draw.Draw(img, image.Rect(r.Min.X, r.Min.Y, r.Max.X, r.Min.Y+st.size*3/2), image.NewUniform(d.colors.panel), image.Point{}, draw.Src)
+		}
+		drawer := font.Drawer{Dst: img, Src: image.NewUniform(st.ink), Face: face, Dot: fixed.P(r.Min.X, baseline)}
+		drawer.DrawString(op.text)
+		for _, line := range []struct {
+			enabled bool
+			y       int
+		}{{st.underline, baseline + 2}, {st.strike, baseline - st.size/3}} {
+			if line.enabled {
+				draw.Draw(img, image.Rect(r.Min.X, line.y, r.Max.X, line.y+max(1, st.size/16)), image.NewUniform(st.ink), image.Point{}, draw.Src)
+			}
+		}
+	}
+	return img
+}
+
+func writePNG(path string, img image.Image) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".rex-md-png-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	encoder := png.Encoder{CompressionLevel: png.BestSpeed}
+	err = encoder.Encode(f, img)
+	if err == nil {
+		err = f.Sync()
+	}
+	closeErr := f.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	return os.Rename(f.Name(), path)
+}
