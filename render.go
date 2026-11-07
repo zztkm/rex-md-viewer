@@ -405,9 +405,13 @@ func (l *layout) block(n ast.Node, left, right int) {
 			seg := lines.At(i)
 			b.Write(seg.Value(l.source))
 		}
-		l.code(strings.TrimSuffix(b.String(), "\n"), left, right)
+		language := ""
+		if fenced, ok := n.(*ast.FencedCodeBlock); ok {
+			language = string(fenced.Language(l.source))
+		}
+		l.code(strings.TrimSuffix(b.String(), "\n"), language, left, right)
 	case *ast.HTMLBlock:
-		l.code(string(v.Text(l.source)), left, right)
+		l.code(string(v.Text(l.source)), "", left, right)
 	case *ast.ThematicBreak:
 		l.y += l.gap
 		l.fill(image.Rect(left, l.y, right, l.y+max(1, l.size/12)), l.doc.colors.line)
@@ -541,7 +545,7 @@ func (l *layout) list(list *ast.List, left, right int) {
 	l.y += l.gap
 }
 
-func (l *layout) code(s string, left, right int) {
+func (l *layout) code(s, language string, left, right int) {
 	top, index := l.y, len(l.doc.ops)
 	if !l.fill(image.Rect(left, top, right, top), l.doc.colors.panel) {
 		return
@@ -550,7 +554,11 @@ func (l *layout) code(s string, left, right int) {
 	l.y += pad
 	st := l.normal()
 	st.code = true
+	glyphStart := len(l.doc.ops)
 	l.inline([]inlinePart{{text: s, style: st}}, left+pad, right-pad, 0)
+	if l.err == nil {
+		highlightCode(l.doc.ops[glyphStart:], s, language, l.doc.colors)
+	}
 	l.y += pad
 	l.doc.ops[index].rect.Max.Y = l.y
 	l.y += l.gap

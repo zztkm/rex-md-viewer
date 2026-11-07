@@ -27,9 +27,26 @@
 ### コード
 
 ```go
+// 日本語のコメントも表示します。
 func main() {
-    fmt.Println("こんにちは、Rex!")
+    fmt.Println("こんにちは、Rex!", 42)
 }
+```
+
+```python
+def greet(name):
+    # キーワード、文字列、数値を色分けします。
+    return f"Hello, {name}!", 42
+```
+
+```bash
+# シェルの変数や文字列も色分けします。
+name="Rex"
+printf '%s\n' "Hello, $name!"
+```
+
+```
+言語指定のないコードブロックは単色のまま表示します。
 ```
 
 #### 表
