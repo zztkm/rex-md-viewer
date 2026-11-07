@@ -200,8 +200,8 @@ func TestListNarrowAndUnsupportedTaskNotation(t *testing.T) {
 		}
 		doc.paint(0, min(doc.height, 200))
 	}
-	doc := listDocument(t, "- [~] WIP\n", 600, 1)
-	if len(listCheckboxes(doc)) != 0 || !strings.Contains(sceneText(doc), "[~] WIP") {
+	doc := listDocument(t, "- [>] Literal\n- [/] Literal\n", 600, 1)
+	if len(listCheckboxes(doc)) != 0 || !strings.Contains(sceneText(doc), "[>] Literal") || !strings.Contains(sceneText(doc), "[/] Literal") {
 		t.Fatal("unsupported task notation changed")
 	}
 }

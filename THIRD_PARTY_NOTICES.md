@@ -8,6 +8,7 @@ Japanese system/user fonts are not bundled.
 Terminal graphics, font-selection, and pane-management design reference: https://github.com/almonk/rexpad
 
 Checkbox geometry, task colors, and spacing in task.go are adapted from rexpad's render.go.
+Working-dot geometry and animation easing in wip.go are adapted from rexpad's dots.go.
 
 MIT License
 
@@ -34,6 +35,8 @@ SOFTWARE.
 ## goldmark
 
 https://github.com/yuin/goldmark
+
+The WIP parser follows the list-item context restrictions of goldmark's TaskList parser.
 
 MIT License
 

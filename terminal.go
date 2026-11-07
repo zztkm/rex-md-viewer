@@ -216,6 +216,20 @@ func parseColorReply(s string) (int, color.RGBA, bool) {
 }
 
 func transmitViewport(w io.Writer, img image.Image, id uint32, cols, rows int) error {
+	if err := transmitImage(w, img, id); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(w, "\x1b[2;1H\x1b_Ga=p,i=%d,p=1,c=%d,r=%d,C=1,q=2\x1b\\", id, cols, rows)
+	return err
+}
+func transmitAnimationTile(w io.Writer, tile animationTile, id uint32) error {
+	if err := transmitImage(w, tile.image, id); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(w, "\x1b[%d;%dH\x1b_Ga=p,i=%d,p=1,c=%d,r=%d,z=1,C=1,q=2\x1b\\", tile.row+2, tile.col+1, id, tile.cols, tile.rows)
+	return err
+}
+func transmitImage(w io.Writer, img image.Image, id uint32) error {
 	var pngData bytes.Buffer
 	encoder := png.Encoder{CompressionLevel: png.BestSpeed}
 	if err := encoder.Encode(&pngData, img); err != nil {
@@ -238,8 +252,7 @@ func transmitViewport(w io.Writer, img image.Image, id uint32, cols, rows int) e
 		}
 		payload = payload[n:]
 	}
-	_, err := fmt.Fprintf(w, "\x1b[2;1H\x1b_Ga=p,i=%d,p=1,c=%d,r=%d,C=1,q=2\x1b\\", id, cols, rows)
-	return err
+	return nil
 }
 func deleteImage(w io.Writer, id uint32) {
 	if id != 0 {
@@ -277,9 +290,20 @@ func view(o options, initial []byte, fonts *fontSet) error {
 	if err != nil {
 		return err
 	}
-	var imageID uint32
+	var imageID, imageSequence uint32
+	var dotIDs []uint32
+	nextImageID := func() uint32 {
+		imageSequence++
+		if imageSequence == 0 || imageSequence == graphicsQueryID {
+			imageSequence++
+		}
+		return imageSequence
+	}
 	defer func() {
 		deleteImage(os.Stdout, imageID)
+		for _, id := range dotIDs {
+			deleteImage(os.Stdout, id)
+		}
 		fmt.Fprint(os.Stdout, "\x1b[?1000l\x1b[?1006l\x1b[?25h\x1b[0m\x1b[?1049l")
 		term.Restore(fd, old)
 	}()
@@ -364,6 +388,27 @@ func view(o options, initial []byte, fonts *fontSet) error {
 	nextTheme := time.Now().Add(2 * time.Second)
 	ready := false
 	var currentVersion uint64
+	var base *image.RGBA
+	animationStart, nextAnimation := time.Now(), time.Time{}
+	redrawDots := func() error {
+		tiles := doc.animationTiles(base, offset, size.cols, size.rows-2, time.Since(animationStart).Seconds())
+		oldIDs := dotIDs
+		var fresh []uint32
+		for _, tile := range tiles {
+			id := nextImageID()
+			dotIDs = append(dotIDs, id) // Include partial uploads in error cleanup.
+			if err := transmitAnimationTile(os.Stdout, tile, id); err != nil {
+				return err
+			}
+			fresh = append(fresh, id)
+		}
+		for _, id := range oldIDs {
+			deleteImage(os.Stdout, id)
+		}
+		dotIDs = fresh
+		nextAnimation = time.Now().Add(time.Second / workingDotsFPS)
+		return nil
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -420,16 +465,20 @@ func view(o options, initial []byte, fonts *fontSet) error {
 		bodyHeight := (size.rows - 2) * size.height / size.rows
 		offset = max(0, min(offset, max(0, doc.height-bodyHeight)))
 		if dirty {
-			img := doc.paint(offset, bodyHeight)
+			base = doc.paintBase(offset, bodyHeight)
 			previous := imageID
-			imageID++
-			if imageID == 0 || imageID == graphicsQueryID {
-				imageID++
-			}
-			if err = transmitViewport(os.Stdout, img, imageID, size.cols, size.rows-2); err != nil {
+			imageID = nextImageID()
+			if err = transmitViewport(os.Stdout, base, imageID, size.cols, size.rows-2); err != nil {
 				return err
 			}
 			deleteImage(os.Stdout, previous)
+			for _, id := range dotIDs {
+				deleteImage(os.Stdout, id)
+			}
+			dotIDs = nil
+			if err = redrawDots(); err != nil {
+				return err
+			}
 			fmt.Fprintf(os.Stdout, "\x1b[1;1H\x1b[2K%s\x1b[%d;1H\x1b[2K%s", terminalLine(filepathBase(o.file), size.cols), size.rows, terminalLine(fmt.Sprintf("%s  %d/%d  q:終了 r:再読込", status, offset, max(0, doc.height-bodyHeight)), size.cols))
 			dirty = false
 			if !ready {
@@ -437,6 +486,11 @@ func view(o options, initial []byte, fonts *fontSet) error {
 					return err
 				}
 				ready = true
+			}
+		}
+		if doc.hasVisibleDots(offset, bodyHeight) && !time.Now().Before(nextAnimation) {
+			if err = redrawDots(); err != nil {
+				return err
 			}
 		}
 		events, err := pollInput(fd, decoder, 40)

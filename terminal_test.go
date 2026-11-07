@@ -64,6 +64,17 @@ func TestTerminalLineSafe(t *testing.T) {
 		t.Fatal("no text")
 	}
 }
+func TestTransmitAnimationTile(t *testing.T) {
+	var out bytes.Buffer
+	tile := animationTile{image: image.NewRGBA(image.Rect(0, 0, 32, 18)), row: 1, col: 3, cols: 2, rows: 1}
+	if err := transmitAnimationTile(&out, tile, 24); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "\x1b[3;4H") || !strings.Contains(out.String(), "a=p,i=24,p=1,c=2,r=1,z=1,C=1,q=2") {
+		t.Fatal("animation patch is not placed in its body cells")
+	}
+}
+
 func TestTransmitViewport(t *testing.T) {
 	var out bytes.Buffer
 	img := image.NewRGBA(image.Rect(0, 0, 20, 20))

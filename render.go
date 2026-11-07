@@ -20,6 +20,7 @@ import (
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
 	ext "github.com/yuin/goldmark/extension/ast"
+	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/text"
 	"github.com/yuin/goldmark/util"
 	xdraw "golang.org/x/image/draw"
@@ -36,16 +37,19 @@ const maxGlyphs = 1_000_000
 type palette struct {
 	bg, fg, muted, accent, panel, line         color.RGBA
 	taskFrame, taskDone, taskAccent, taskCheck color.RGBA
+	taskActiveBg                               color.RGBA
 }
 
 func paletteFor(theme string) palette {
 	if theme == "light" {
 		p := makePalette(color.RGBA{250, 250, 252, 255}, color.RGBA{32, 36, 44, 255})
 		p.taskFrame, p.taskDone = color.RGBA{193, 195, 198, 255}, color.RGBA{150, 153, 158, 255}
+		p.taskActiveBg = color.RGBA{232, 238, 249, 255}
 		return p
 	}
 	p := makePalette(color.RGBA{25, 28, 35, 255}, color.RGBA{222, 226, 234, 255})
 	p.taskFrame, p.taskDone = color.RGBA{96, 99, 105, 255}, color.RGBA{128, 131, 137, 255}
+	p.taskActiveBg = color.RGBA{37, 49, 72, 255}
 	return p
 }
 func mix(a, b color.RGBA, n int) color.RGBA {
@@ -74,13 +78,15 @@ type paintOp struct {
 	text     string
 	style    textStyle
 	picture  image.Image
-	checkbox *bool
+	checkbox *taskStatus
+	radius   float64
 }
 type document struct {
 	width, height int
 	ops           []paintOp
 	fonts         *fontSet
 	colors        palette
+	dots          []workingDots
 }
 type layout struct {
 	doc          *document
@@ -96,7 +102,7 @@ type inlinePart struct {
 	text     string
 	style    textStyle
 	image    *ast.Image
-	checkbox *bool
+	checkbox *taskStatus
 }
 
 func safeText(s string) string {
@@ -122,8 +128,8 @@ func layoutMarkdown(source []byte, path string, width int, scale float64, fonts 
 	l := &layout{doc: &document{width: width, fonts: fonts, colors: colors}, source: source, baseDir: filepath.Dir(path), scale: scale, size: max(1, int(16*scale)), gap: max(1, int(10*scale)), images: make(map[string]image.Image)}
 	pad := min(max(1, int(28*scale)), width/12)
 	l.y = pad
-	parser := goldmark.New(goldmark.WithExtensions(extension.Table, extension.TaskList, extension.Strikethrough, extension.Linkify))
-	root := parser.Parser().Parse(text.NewReader(source))
+	markdown := goldmark.New(goldmark.WithExtensions(extension.Table, extension.TaskList, extension.Strikethrough, extension.Linkify), goldmark.WithParserOptions(parser.WithInlineParsers(util.Prioritized(&wipParser{}, 0))))
+	root := markdown.Parser().Parse(text.NewReader(source))
 	if len(source) == 0 {
 		l.inline([]inlinePart{{text: "空のファイル", style: l.normal()}}, pad, width-pad, 0)
 	} else {
@@ -223,8 +229,14 @@ func (l *layout) inlineParts(parent ast.Node, st textStyle) []inlinePart {
 		case *ast.Image:
 			parts = append(parts, inlinePart{image: v, style: st})
 		case *ext.TaskCheckBox:
-			checked := v.IsChecked
-			parts = append(parts, inlinePart{checkbox: &checked, style: st})
+			state := taskPending
+			if v.IsChecked {
+				state = taskDone
+			}
+			parts = append(parts, inlinePart{checkbox: &state, style: st})
+		case *wipMarker:
+			state := taskActive
+			parts = append(parts, inlinePart{checkbox: &state, style: st})
 		case *ast.RawHTML:
 			parts = append(parts, inlinePart{text: string(v.Segments.Value(l.source)), style: st})
 		default:
@@ -260,7 +272,7 @@ func splitWords(s string) []string {
 func (l *layout) inline(parts []inlinePart, left, right int, alignment ext.Alignment) {
 	l.inlineWithLineHeight(parts, left, right, alignment, 0)
 }
-func (l *layout) inlineWithLineHeight(parts []inlinePart, left, right int, alignment ext.Alignment, fixedHeight int) {
+func (l *layout) inlineWithLineHeight(parts []inlinePart, left, right int, alignment ext.Alignment, fixedHeight int) (int, int) {
 	left = min(left, l.doc.width-1)
 	right = max(left+1, min(right, l.doc.width))
 	x, lineTop := left, l.y
@@ -348,6 +360,7 @@ func (l *layout) inlineWithLineHeight(parts []inlinePart, left, right int, align
 		alignLine()
 		l.y = lineTop + lineHeight
 	}
+	return x, lineTop
 }
 
 func (l *layout) blocks(parent ast.Node, left, right int) {
@@ -405,12 +418,10 @@ func (l *layout) block(n ast.Node, left, right int) {
 		l.blocks(n, left, right)
 	}
 }
-func (l *layout) listMarker(item ast.Node, ordered bool, number int, st textStyle) (string, *ext.TaskCheckBox, int) {
-	if first := item.FirstChild(); first != nil {
-		if check, ok := first.FirstChild().(*ext.TaskCheckBox); ok {
-			m := taskLayout(l.taskScale() * float64(st.size) / float64(l.size))
-			return "", check, m.box
-		}
+func (l *layout) listMarker(item ast.Node, ordered bool, number int, st textStyle) (string, taskStatus, int) {
+	if state := itemTaskState(item); state != taskNone {
+		m := taskLayout(l.taskScale() * float64(st.size) / float64(l.size))
+		return "", state, m.box
 	}
 	label := "•"
 	if ordered {
@@ -420,7 +431,7 @@ func (l *layout) listMarker(item ast.Node, ordered bool, number int, st textStyl
 	for _, r := range label {
 		width += l.charWidth(r, st)
 	}
-	return label, nil, width
+	return label, taskNone, width
 }
 
 func (l *layout) list(list *ast.List, left, right int) {
@@ -430,7 +441,7 @@ func (l *layout) list(list *ast.List, left, right int) {
 	taskOnly := list.FirstChild() != nil
 	for item := list.FirstChild(); item != nil; item = item.NextSibling() {
 		_, check, _ := l.listMarker(item, list.IsOrdered(), 1, st)
-		if check == nil {
+		if check == taskNone {
 			taskOnly = false
 			break
 		}
@@ -465,12 +476,16 @@ func (l *layout) list(list *ast.List, left, right int) {
 			return
 		}
 		label, check, width := l.listMarker(item, list.IsOrdered(), number, st)
-		if check != nil {
+		activeRow := -1
+		if check == taskActive {
+			activeRow = l.startActiveRow(left, right)
+		}
+		if check != taskNone {
 			y := l.y
 			if !stacked {
 				y += max(0, (taskLayout(l.taskScale()).pitch-width)/2)
 			}
-			l.drawCheckbox(left, y, width, check.IsChecked)
+			l.drawCheckbox(left, y, width, check)
 		} else {
 			x := left
 			if list.IsOrdered() {
@@ -485,21 +500,35 @@ func (l *layout) list(list *ast.List, left, right int) {
 			}
 		}
 		if stacked {
-			if check != nil {
+			if check != taskNone {
 				l.y += width + gap
 			} else {
 				l.y += max(2, st.size*2)
 			}
 		}
 		bodyTop := l.y
+		var lastParagraph ast.Node
+		for block := item.FirstChild(); block != nil; block = block.NextSibling() {
+			switch block.(type) {
+			case *ast.Paragraph, *ast.TextBlock:
+				lastParagraph = block
+			}
+		}
 		for block := item.FirstChild(); block != nil; block = block.NextSibling() {
 			if l.err != nil {
 				return
 			}
 			_, paragraph := block.(*ast.Paragraph)
 			_, textBlock := block.(*ast.TextBlock)
-			if check != nil && (paragraph || textBlock) {
-				l.taskParagraph(block, bodyLeft, right, check.IsChecked, block == item.FirstChild())
+			if check != taskNone && (paragraph || textBlock) {
+				row := activeRow
+				if check == taskActive && block != item.FirstChild() {
+					row = l.startActiveRow(left, right)
+				}
+				l.taskParagraph(block, bodyLeft, right, check, block == item.FirstChild(), check == taskActive && block == lastParagraph)
+				if check == taskActive {
+					l.finishActiveRow(row)
+				}
 			} else {
 				l.block(block, bodyLeft, right)
 			}
@@ -654,6 +683,11 @@ func (l *layout) localImage(destination string, width int) (image.Image, error) 
 }
 
 func (d *document) paint(offset, height int) *image.RGBA {
+	img := d.paintBase(offset, height)
+	d.drawDots(img, image.Pt(0, offset), staticDotsPhase)
+	return img
+}
+func (d *document) paintBase(offset, height int) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, d.width, max(1, height)))
 	draw.Draw(img, img.Bounds(), image.NewUniform(d.colors.bg), image.Point{}, draw.Src)
 	checkboxes := make(map[checkboxKey]*image.RGBA)
@@ -662,11 +696,15 @@ func (d *document) paint(offset, height int) *image.RGBA {
 		if !r.Overlaps(img.Bounds()) {
 			continue
 		}
+		if op.radius > 0 {
+			paintRoundedRect(img, r, op.radius, op.ink)
+			continue
+		}
 		if op.checkbox != nil {
-			key := checkboxKey{size: r.Dx(), checked: *op.checkbox}
+			key := checkboxKey{size: r.Dx(), state: *op.checkbox}
 			box := checkboxes[key]
 			if box == nil {
-				box = checkboxImage(key.size, key.checked, d.colors)
+				box = checkboxImage(key.size, key.state, d.colors)
 				checkboxes[key] = box
 			}
 			draw.Draw(img, r, box, image.Point{}, draw.Over)

@@ -6,6 +6,7 @@ import fcntl
 import os
 from pathlib import Path
 import pty
+import re
 import select
 import signal
 import struct
@@ -17,7 +18,7 @@ import time
 
 BINARY = str(Path(sys.argv[1] if len(sys.argv) > 1 else "bin/rex-md-viewer").resolve())
 QUERY = b"i=2147483000"
-SOURCE = "# 日本語\n\n- [ ] 未完了\n- [x] 完了\n\n" + "日本語の本文と English **bold**.\n\n" * 2000
+SOURCE = "# 日本語\n\n- [ ] 未完了\n- [~] 作業中\n- [x] 完了\n\n" + "日本語の本文と English **bold**.\n\n" * 2000
 
 
 def exercise(ending, supported=True):
@@ -34,6 +35,7 @@ def exercise(ending, supported=True):
             stdin=slave, stdout=slave, stderr=slave, env=env,
         )
         data = bytearray()
+        history = bytearray()
         query_answered = False
 
         def pump():
@@ -44,6 +46,7 @@ def exercise(ending, supported=True):
                 except OSError:
                     block = b""
                 data.extend(block)
+                history.extend(block)
             if not query_answered and QUERY in data:
                 query_answered = True
                 if supported:
@@ -85,6 +88,15 @@ def exercise(ending, supported=True):
                 width, height = struct.unpack(">II", png[16:24])
                 assert (width, height) == (640, 396), (width, height)
 
+                # Only small dot patches should change while WIP is visible.
+                until = time.monotonic() + 0.25
+                while time.monotonic() < until:
+                    pump()
+                data.clear()
+                wait_for(lambda d: d.count(b"z=1,C=1,q=2") >= 3)
+                assert b"c=80,r=22,C=1" not in data, "animation retransmitted the whole viewport"
+                print("PASS visible WIP animates using small overlays")
+
                 data.clear()
                 os.write(master, b"G")
                 wait_for(lambda d: b"a=p," in d)
@@ -103,6 +115,23 @@ def exercise(ending, supported=True):
                 elapsed = time.monotonic() - started
                 print(f"PTY update ({len(SOURCE.encode())} bytes): {elapsed:.3f}s")
                 assert elapsed < 1.0, elapsed
+
+                # Completion must remove the overlay and stop animation.
+                os.write(master, b"g")
+                data.clear()
+                wait_for(lambda d: b"z=1,C=1,q=2" in d)
+                data.clear()
+                path.write_text(SOURCE.replace("English", "Changed").replace("[~]", "[x]"))
+                wait_for(lambda d: "更新 ".encode() in d)
+                until = time.monotonic() + 0.2
+                while time.monotonic() < until:
+                    pump()
+                data.clear()
+                until = time.monotonic() + 0.3
+                while time.monotonic() < until:
+                    pump()
+                assert b"a=p," not in data, "completed WIP still animates"
+                print("PASS WIP completion stops animation")
 
                 data.clear()
                 path.unlink()
@@ -139,6 +168,9 @@ def exercise(ending, supported=True):
             assert b"\x1b[?1049l" in data and b"\x1b[?25h" in data
             if supported:
                 assert b"a=d,d=I," in data
+                uploaded = set(re.findall(rb"a=t,f=100,t=d,i=(\d+)", history))
+                deleted = set(re.findall(rb"a=d,d=I,i=(\d+)", history))
+                assert uploaded <= deleted, f"images leaked: {uploaded - deleted}"
             print(f"PASS terminal cleanup: {ending}, supported={supported}")
         finally:
             if process.poll() is None:

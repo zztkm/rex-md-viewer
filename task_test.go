@@ -38,7 +38,7 @@ func TestTaskRowStyleAndPitch(t *testing.T) {
 		t.Fatalf("pitch=%d", pitch)
 	}
 	boxes := listCheckboxes(doc)
-	if len(boxes) != 2 || *boxes[0].checkbox || !*boxes[1].checkbox {
+	if len(boxes) != 2 || *boxes[0].checkbox != taskPending || *boxes[1].checkbox != taskDone {
 		t.Fatal("checkbox states lost")
 	}
 	for i, glyph := range []paintOp{a, b} {
@@ -150,7 +150,7 @@ func TestTaskViewportMatchesFullCrop(t *testing.T) {
 func TestTaskUppercaseCompletion(t *testing.T) {
 	doc := listDocument(t, "- [X] Alpha\n", 300, 1)
 	boxes := listCheckboxes(doc)
-	if len(boxes) != 1 || !*boxes[0].checkbox || listGlyph(t, doc, "A").style.ink != doc.colors.taskDone {
+	if len(boxes) != 1 || *boxes[0].checkbox != taskDone || listGlyph(t, doc, "A").style.ink != doc.colors.taskDone {
 		t.Fatal("uppercase completion marker not styled")
 	}
 }
