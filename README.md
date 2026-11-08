@@ -14,14 +14,9 @@ Rex で Markdown ファイルをプレビューするためのツール。
 
 ```bash
 go install github.com/zztkm/rex-md-viewer@latest
-
-# または、このリポジトリからビルドする
-make build
-./bin/rex-md-viewer --help
 ```
 
 `go install` のインストール先（通常は `~/go/bin`）を `PATH` に追加してください。
-開発中のバイナリを利用する場合は、以下の `rex-md-viewer` を `./bin/rex-md-viewer` に置き換えます。
 
 ## 使い方
 
