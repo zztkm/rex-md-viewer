@@ -95,7 +95,13 @@ make smoke-links-rex
 
 スモークテストには Python 3 が必要です。
 検証内容と制限は [docs/testing.md](docs/testing.md) に記載しています。
-バイナリを再配布する際は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を同梱してください。
+
+## ライセンス
+
+本プロジェクトは [MIT License](LICENSE) で公開しています。
+第三者由来のコードと同梱フォントには、それぞれのライセンスが適用されます。
+詳細は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
+バイナリを再配布する際は、`LICENSE` と `THIRD_PARTY_NOTICES.md` を同梱してください。
 
 ## 要求
 
