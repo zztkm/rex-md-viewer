@@ -20,7 +20,7 @@ func TestParseOptions(t *testing.T) {
 		{"in-place", "view", []string{"--in-place", "日本語 ファイル.md"}, false},
 		{"below", "view", []string{"--below", "--ratio", "30", "doc.md"}, false},
 		{"conflict-below", "view", []string{"--in-place", "--below", "doc.md"}, true},
-		{"conflict-explicit-default", "view", []string{"--in-place", "--ratio", "40", "doc.md"}, true},
+		{"conflict-explicit-default", "view", []string{"--in-place", "--ratio", "50", "doc.md"}, true},
 		{"conflict-false", "view", []string{"--in-place", "--below=false", "doc.md"}, true},
 		{"ratio0", "view", []string{"--ratio", "0", "doc.md"}, true},
 		{"ratio100", "view", []string{"--ratio", "100", "doc.md"}, true},
@@ -52,8 +52,16 @@ func TestParseOptions(t *testing.T) {
 		})
 	}
 	o, _ := parseOptions("view", []string{"doc"}, io.Discard)
-	if o.inPlace || o.ratio != 40 || o.theme != "terminal" {
+	if o.inPlace || o.ratio != 50 || o.theme != "terminal" {
 		t.Fatalf("defaults: %+v", o)
+	}
+	o, _ = parseOptions("view", []string{"--below", "doc"}, io.Discard)
+	if !o.below || o.ratio != 50 {
+		t.Fatalf("below defaults: %+v", o)
+	}
+	o, _ = parseOptions("view", []string{"--ratio", "40", "doc"}, io.Discard)
+	if o.ratio != 40 {
+		t.Fatalf("explicit ratio: %+v", o)
 	}
 	o, _ = parseOptions("render", []string{"-o", "out", "doc"}, io.Discard)
 	if o.width != 1000 || o.theme != "light" {

@@ -168,7 +168,7 @@ rex-md-viewer skill install --dir ~/.pi/agent/skills
 | --- | --- | --- |
 | `--in-place` | `view` | 分割ペインを開かず、現在の端末で表示する。既定では指定なし（右側の分割ペインに表示）。 |
 | `--below` | `view` | 右側ではなく下側に分割する。 |
-| `--ratio PCT` | `view` | 新しいペインの割合。既定値は `40`、指定範囲は `1`〜`99`。 |
+| `--ratio PCT` | `view` | 新しいペインの割合。既定値は `50`、指定範囲は `1`〜`99`。 |
 | `--theme terminal\|light\|dark` | `view` | 既定値は `terminal`。端末の前景色と背景色を基準に配色する。 |
 | `--theme light\|dark` | `render` | 既定値は `light`。 |
 | `--font PATH` | `view`, `render` | 本文フォントのファイルパス。`REX_MD_VIEWER_FONT` より優先する。未指定時の選択順は「フォントの設定」に従う。 |

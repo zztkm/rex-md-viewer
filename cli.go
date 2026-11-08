@@ -24,7 +24,7 @@ type options struct {
 const help = `rex-md-viewer: Markdown を Rex でプレビューする
 
 Usage:
-  rex-md-viewer view [--in-place | --below] [--ratio 40] [OPTIONS] FILE
+  rex-md-viewer view [--in-place | --below] [--ratio 50] [OPTIONS] FILE
   rex-md-viewer hide FILE
   rex-md-viewer render [--width 1000] [OPTIONS] -o OUTPUT.png FILE
   rex-md-viewer skill install --dir DIR [--force]
@@ -45,7 +45,7 @@ q / Ctrl-C: 終了、j/k: スクロール、Space/b: ページ移動、g/G: 先�
 `
 
 func parseOptions(command string, args []string, out io.Writer) (options, error) {
-	o := options{ratio: 40, width: 1000, theme: "terminal"}
+	o := options{ratio: 50, width: 1000, theme: "terminal"}
 	if command == "render" {
 		o.theme = "light"
 	}
@@ -58,7 +58,7 @@ func parseOptions(command string, args []string, out io.Writer) (options, error)
 	if command == "view" {
 		f.BoolVar(&o.inPlace, "in-place", false, "現在の端末で表示")
 		f.BoolVar(&o.below, "below", false, "下側に分割")
-		f.IntVar(&o.ratio, "ratio", 40, "ペインの割合")
+		f.IntVar(&o.ratio, "ratio", o.ratio, "ペインの割合")
 	} else {
 		f.IntVar(&o.width, "width", 1000, "画像の幅")
 		f.StringVar(&o.output, "o", "", "出力 PNG")
