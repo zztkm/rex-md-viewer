@@ -56,23 +56,23 @@ with tempfile.TemporaryDirectory(prefix="rex-md-smoke-") as temp:
                 time.sleep(0.04)
             raise AssertionError(content)
 
-        content = wait_for(lambda c: "表示中" in c)
+        content = wait_for(lambda c: "Viewing" in c)
         stamp = file.stat()
         start = time.monotonic()
         file.write_text(source.replace("English", "Changed"))
         os.utime(file, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
-        content = wait_for(lambda c: "更新 " in c)
+        content = wait_for(lambda c: "Updated " in c)
         elapsed = time.monotonic() - start
         print(f"PASS real Rex update ({len(source.encode())} bytes): {elapsed:.3f}s")
         assert elapsed < 1.0, elapsed
         rex("send", "-s", SESSION, "-b", block, "G")
         content = wait_for(lambda c: bool(re.search(r"(\d+)/\1", c)))
         file.unlink()
-        wait_for(lambda c: "読み込みエラー" in c)
+        wait_for(lambda c: "Read error" in c)
         replacement = Path(temp) / "save.tmp"
         replacement.write_text(source)
         replacement.replace(file)
-        wait_for(lambda c: "更新 " in c)
+        wait_for(lambda c: "Updated " in c)
         print("PASS scroll, deletion, atomic-save recovery")
     finally:
         if block:

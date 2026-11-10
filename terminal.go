@@ -372,7 +372,7 @@ func viewWithOpener(o options, initial []byte, fonts *fontSet, openURL func(cont
 	monitor := startMonitor(ctx, o.file, initial)
 	data := initial
 	offset := 0
-	status := "表示中"
+	status := "Viewing"
 	dirty := true
 	needLayout := false
 	nextTheme := time.Now().Add(2 * time.Second)
@@ -410,9 +410,9 @@ func viewWithOpener(o options, initial []byte, fonts *fontSet, openURL func(cont
 		select {
 		case err := <-opened:
 			opening = false
-			status = "リンクをブラウザへ渡しました"
+			status = "Link sent to browser"
 			if err != nil {
-				status = "リンクを開けません: " + err.Error()
+				status = "Cannot open link: " + err.Error()
 			}
 			dirty = true
 		default:
@@ -427,14 +427,14 @@ func viewWithOpener(o options, initial []byte, fonts *fontSet, openURL func(cont
 			}
 			currentVersion = ev.version
 			if ev.err != nil {
-				status = "読み込みエラー: " + ev.err.Error()
+				status = "Read error: " + ev.err.Error()
 				dirty = true
 			} else {
 				data = ev.data
 				needLayout = true
-				label := "更新 "
+				label := "Updated "
 				if ev.forced {
-					label = "再読み込み "
+					label = "Reloaded "
 				}
 				status = label + time.Now().Format("15:04:05.000")
 			}
@@ -453,7 +453,7 @@ func viewWithOpener(o options, initial []byte, fonts *fontSet, openURL func(cont
 		if needLayout {
 			candidate, e := layoutMarkdown(data, o.file, size.width, scale(size), fonts, colors)
 			if e != nil {
-				status = "描画エラー: " + e.Error()
+				status = "Render error: " + e.Error()
 				dirty = true
 			} else {
 				// Layout and painting are serialized in this loop, and snapshots
@@ -482,11 +482,11 @@ func viewWithOpener(o options, initial []byte, fonts *fontSet, openURL func(cont
 			if err = redrawDots(); err != nil {
 				return err
 			}
-			linkHelp := "リンク操作:非対応"
+			linkHelp := "Links:unavailable"
 			if links.capable() {
-				linkHelp = "Cmd+クリック:リンク"
+				linkHelp = "Cmd+click:open link"
 			}
-			fmt.Fprintf(os.Stdout, "\x1b[1;1H\x1b[2K%s\x1b[%d;1H\x1b[2K%s", terminalLine(filepathBase(o.file), size.cols), size.rows, terminalLine(fmt.Sprintf("%s  %d/%d  q:終了 r:再読込 %s", status, offset, max(0, doc.height-bodyHeight), linkHelp), size.cols))
+			fmt.Fprintf(os.Stdout, "\x1b[1;1H\x1b[2K%s\x1b[%d;1H\x1b[2K%s", terminalLine(filepathBase(o.file), size.cols), size.rows, terminalLine(fmt.Sprintf("%s  %d/%d  q:quit r:reload %s", status, offset, max(0, doc.height-bodyHeight), linkHelp), size.cols))
 			dirty = false
 			if !ready {
 				if err = reportReady(); err != nil {

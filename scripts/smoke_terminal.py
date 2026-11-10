@@ -70,7 +70,7 @@ def exercise(ending, supported=True):
                 assert process.returncode == 1
                 assert b"Kitty Graphics Protocol" in data
             else:
-                wait_for(lambda d: "表示中".encode() in d)
+                wait_for(lambda d: "Viewing".encode() in d)
                 assert b"a=p," in data
                 # Every upload is a PNG of the viewport, never the tall document.
                 start = data.index(b"a=t,")
@@ -111,7 +111,7 @@ def exercise(ending, supported=True):
                 started = time.monotonic()
                 path.write_text(SOURCE.replace("English", "Changed"))
                 os.utime(path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
-                update_stamp = re.compile("更新 ".encode() + rb"\d{2}:\d{2}:\d{2}\.\d{3}")
+                update_stamp = re.compile("Updated ".encode() + rb"\d{2}:\d{2}:\d{2}\.\d{3}")
                 wait_for(lambda d: bool(update_stamp.search(d)))
                 elapsed = time.monotonic() - started
                 print(f"PTY update ({len(SOURCE.encode())} bytes): {elapsed:.3f}s")
@@ -140,12 +140,12 @@ def exercise(ending, supported=True):
 
                 data.clear()
                 path.unlink()
-                wait_for(lambda d: "読み込みエラー".encode() in d)
+                wait_for(lambda d: "Read error".encode() in d)
                 data.clear()
                 replacement = Path(temp) / "save.tmp"
                 replacement.write_text(SOURCE)
                 replacement.replace(path)
-                wait_for(lambda d: "更新 ".encode() in d)
+                wait_for(lambda d: "Updated ".encode() in d)
 
                 # A theme reply triggers a redraw without changing the file.
                 data.clear()
@@ -153,7 +153,7 @@ def exercise(ending, supported=True):
                 wait_for(lambda d: b"a=p," in d)
                 data.clear()
                 os.write(master, b"r")
-                wait_for(lambda d: "再読み込み".encode() in d)
+                wait_for(lambda d: "Reloaded".encode() in d)
                 if ending == "q":
                     os.write(master, b"q")
                 elif ending == "ctrl-c":

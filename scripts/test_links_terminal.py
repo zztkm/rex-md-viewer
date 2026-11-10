@@ -86,11 +86,11 @@ def exercise(capable):
         def change(destination):
             data.clear()
             path.write_text(SOURCE.replace("/first", "/" + destination))
-            wait_for(lambda: "更新 ".encode() in data)
+            wait_for(lambda: "Updated ".encode() in data)
             idle()
 
         try:
-            wait_for(lambda: "表示中".encode() in data)
+            wait_for(lambda: "Viewing".encode() in data)
             points = json.loads(Path(str(path) + ".points").read_text())
             first, second = points[:2]
             assert b"\x1b[>11u" in history and b"\x1b[?1016h" in history
@@ -109,7 +109,7 @@ def exercise(capable):
                     count = len(opened())
                     click(point)
                     wait_for(lambda: len(opened()) == count + 1)
-                    wait_for(lambda: "リンクをブラウザへ渡しました".encode() in data)
+                    wait_for(lambda: "Link sent to browser".encode() in data)
                     assert opened()[-1] == "https://example.com/" + target, opened()
                     pointer(point, release=True)
                     idle()
@@ -141,7 +141,7 @@ def exercise(capable):
                 data.clear()
                 click(first)
                 wait_for(lambda: len(opened()) == count + 1)
-                wait_for(lambda: "リンクをブラウザへ渡しました".encode() in data)
+                wait_for(lambda: "Link sent to browser".encode() in data)
                 assert opened()[-1] == "https://example.com/other"
                 count += 1
 
@@ -149,14 +149,14 @@ def exercise(capable):
                 change("fail")
                 data.clear()
                 click(first)
-                wait_for(lambda: "リンクを開けません: test browser failure".encode() in data)
+                wait_for(lambda: "Cannot open link: test browser failure".encode() in data)
                 assert len(opened()) == count + 1
                 count += 1
 
                 # Removal and scrolling must not leave old clickable positions.
                 data.clear()
                 path.write_text("no links\n\n" + "body text\n\n" * 100)
-                wait_for(lambda: "更新 ".encode() in data)
+                wait_for(lambda: "Updated ".encode() in data)
                 click(first)
                 idle()
                 assert len(opened()) == count

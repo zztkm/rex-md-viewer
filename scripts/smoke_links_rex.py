@@ -45,7 +45,7 @@ with tempfile.TemporaryDirectory(prefix="rex-md-link-rex-") as temp:
                 time.sleep(.05)
             raise AssertionError(capture())
 
-        wait_for(lambda: "表示中" in capture())
+        wait_for(lambda: "Viewing" in capture())
         size = json.loads(rex("block", "call", "-s", SESSION, "-b", block, "size"))
         cell_w, cell_h = size["cell_width_px"], size["cell_height_px"]
         points = json.loads(Path(str(path) + ".points").read_text())
@@ -80,7 +80,7 @@ with tempfile.TemporaryDirectory(prefix="rex-md-link-rex-") as temp:
             cmd("press")
             click(point)
             wait_for(lambda: opened() and opened()[-1] == "https://example.com/" + target)
-            wait_for(lambda: "リンクをブラウザへ渡しました" in capture())
+            wait_for(lambda: "Link sent to browser" in capture())
             cmd("release")
         assert opened() == ["https://example.com/first", "https://example.com/second"], opened()
         print("PASS Rex pixel mouse + standalone Command encoder, distinct targets, plain-click rejection")
