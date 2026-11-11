@@ -19,7 +19,7 @@ func readMarkdown(path string) ([]byte, error) {
 		return nil, err
 	}
 	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("通常ファイルではありません: %s", path)
+		return nil, fmt.Errorf("not a regular file: %s", path)
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -31,10 +31,10 @@ func readMarkdown(path string) ([]byte, error) {
 		return nil, err
 	}
 	if len(b) > maxMarkdownBytes {
-		return nil, fmt.Errorf("Markdown は 8 MiB 以下にしてください")
+		return nil, fmt.Errorf("Markdown file must be 8 MiB or smaller")
 	}
 	if !utf8.Valid(b) {
-		return nil, fmt.Errorf("UTF-8 として読み込めません: %s", path)
+		return nil, fmt.Errorf("file is not valid UTF-8: %s", path)
 	}
 	return b, nil
 }

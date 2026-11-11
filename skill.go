@@ -24,12 +24,12 @@ func runSkill(args []string, out io.Writer) error {
 		return nil
 	}
 	if len(args) == 0 || args[0] != "install" {
-		return usagef("skill show または skill install --dir DIR を指定してください")
+		return usagef("specify skill show or skill install --dir DIR")
 	}
 	f := flag.NewFlagSet("skill install", flag.ContinueOnError)
 	f.SetOutput(io.Discard)
-	dir := f.String("dir", "", "Skill の親ディレクトリ")
-	force := f.Bool("force", false, "上書き")
+	dir := f.String("dir", "", "Parent directory for skills")
+	force := f.Bool("force", false, "Overwrite an existing skill")
 	if err := f.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprint(out, help)
@@ -38,7 +38,7 @@ func runSkill(args []string, out io.Writer) error {
 		return usagef("%s", err)
 	}
 	if *dir == "" || f.NArg() != 0 {
-		return usagef("skill install --dir DIR [--force] を指定してください")
+		return usagef("specify skill install --dir DIR [--force]")
 	}
 	path := filepath.Join(*dir, "rex-md-viewer", "SKILL.md")
 	if existing, err := os.ReadFile(path); err == nil {
@@ -47,7 +47,7 @@ func runSkill(args []string, out io.Writer) error {
 			return nil
 		}
 		if !*force {
-			return fmt.Errorf("%s は内容が異なります。上書きする場合は --force を指定してください", path)
+			return fmt.Errorf("%s has different contents; use --force to overwrite it", path)
 		}
 	} else if !os.IsNotExist(err) {
 		return err

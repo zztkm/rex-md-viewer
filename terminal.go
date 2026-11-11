@@ -32,7 +32,7 @@ func getSize(fd int) (terminalSize, error) {
 		return terminalSize{}, err
 	}
 	if ws.Col == 0 || ws.Row < 3 {
-		return terminalSize{}, fmt.Errorf("端末は 1 列以上、3 行以上必要です")
+		return terminalSize{}, fmt.Errorf("terminal must have at least 1 column and 3 rows")
 	}
 	s := terminalSize{int(ws.Col), int(ws.Row), int(ws.Xpixel), int(ws.Ypixel)}
 	if s.width == 0 {
@@ -42,7 +42,7 @@ func getSize(fd int) (terminalSize, error) {
 		s.height = s.rows * 18
 	}
 	if s.width > 8192 || int64(s.width)*int64(s.height) > maxRenderPixels {
-		return s, fmt.Errorf("端末の描画領域が大きすぎます")
+		return s, fmt.Errorf("terminal rendering area is too large")
 	}
 	return s, nil
 }
@@ -270,7 +270,7 @@ func view(o options, initial []byte, fonts *fontSet) error {
 func viewWithOpener(o options, initial []byte, fonts *fontSet, openURL func(context.Context, string) error) error {
 	fd := int(os.Stdin.Fd())
 	if !term.IsTerminal(fd) || !term.IsTerminal(int(os.Stdout.Fd())) {
-		return fmt.Errorf("view --in-place は対話端末で実行してください")
+		return fmt.Errorf("run view --in-place in an interactive terminal")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -358,7 +358,7 @@ func viewWithOpener(o options, initial []byte, fonts *fontSet, openURL func(cont
 		}
 	}
 	if !supported {
-		return fmt.Errorf("Kitty Graphics Protocol の対応を確認できませんでした。macOS の Rex で実行してください")
+		return fmt.Errorf("could not confirm Kitty Graphics Protocol support; run in Rex on macOS")
 	}
 	size, err := getSize(fd)
 	if err != nil {

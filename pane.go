@@ -48,10 +48,10 @@ func stateDir() (string, error) {
 func getRexContext() (rexContext, error) {
 	r := rexContext{server: os.Getenv("REX_SERVER"), session: os.Getenv("REX_SESSION"), anchor: os.Getenv("REX_BLOCK")}
 	if r.server == "" || r.session == "" || r.anchor == "" {
-		return r, fmt.Errorf("Rex 内で実行してください（REX_SERVER / REX_SESSION / REX_BLOCK が必要です）")
+		return r, fmt.Errorf("run inside Rex (REX_SERVER, REX_SESSION, and REX_BLOCK are required)")
 	}
 	if _, err := exec.LookPath("rex"); err != nil {
-		return r, fmt.Errorf("rex CLI が PATH にありません")
+		return r, fmt.Errorf("rex CLI not found in PATH")
 	}
 	var err error
 	r.dir, err = stateDir()
@@ -78,7 +78,7 @@ func (r rexContext) blocks() ([]rexBlock, error) {
 		Blocks []rexBlock `json:"blocks"`
 	}
 	if err = json.Unmarshal(out, &result); err != nil {
-		return nil, fmt.Errorf("rex block ls の応答: %w", err)
+		return nil, fmt.Errorf("invalid rex block ls response: %w", err)
 	}
 	return result.Blocks, nil
 }
@@ -183,12 +183,12 @@ func managePane(file string, o options, hide bool, out io.Writer) error {
 		}
 	}
 	if !anchorFound {
-		return fmt.Errorf("呼び出し元の Rex ペインが存在しません: %s", r.anchor)
+		return fmt.Errorf("calling Rex pane does not exist: %s", r.anchor)
 	}
 	var rec paneRecord
 	if data, e := os.ReadFile(path); e == nil {
 		if e = json.Unmarshal(data, &rec); e != nil {
-			return fmt.Errorf("状態ファイルが壊れています: %w", e)
+			return fmt.Errorf("invalid state file: %w", e)
 		}
 		if rec.Block == "" && validToken(rec.Token) {
 			for _, b := range blocks {
@@ -280,7 +280,7 @@ func managePane(file string, o options, hide bool, out io.Writer) error {
 			Blocks []string `json:"block_ids"`
 		}
 		if e := json.Unmarshal(result, &created); e != nil {
-			return fmt.Errorf("rex split の応答: %w", e)
+			return fmt.Errorf("invalid rex split response: %w", e)
 		}
 		for _, id := range created.Blocks {
 			if id != r.anchor {
@@ -289,7 +289,7 @@ func managePane(file string, o options, hide bool, out io.Writer) error {
 			}
 		}
 		if rec.Block == "" {
-			return fmt.Errorf("rex split が新しいペイン ID を返しませんでした")
+			return fmt.Errorf("rex split did not return a new pane ID")
 		}
 	}
 	data, _ := json.Marshal(rec)
@@ -319,7 +319,7 @@ func (r rexContext) waitReady(rec paneRecord, out io.Writer) error {
 	}
 	// This block was just created by this call; leave an error visible for
 	// inspection rather than claiming that an unsuccessful viewer opened.
-	return fmt.Errorf("Viewer の起動を確認できませんでした（%s）。rex capture -s %s -b %s でエラーを確認してください", rec.Block, r.session, rec.Block)
+	return fmt.Errorf("could not confirm viewer startup (%s); check for errors with rex capture -s %s -b %s", rec.Block, r.session, rec.Block)
 }
 
 func reportReady() error {
@@ -328,7 +328,7 @@ func reportReady() error {
 		return nil
 	}
 	if !validToken(token) {
-		return fmt.Errorf("不正な Viewer 起動トークン")
+		return fmt.Errorf("invalid viewer startup token")
 	}
 	dir, err := stateDir()
 	if err != nil {

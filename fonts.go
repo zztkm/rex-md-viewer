@@ -87,7 +87,7 @@ func parseFont(path string) (*sfnt.Font, error) {
 		}
 	}
 	if first == nil {
-		return nil, fmt.Errorf("フォントを読み込めません: %s", path)
+		return nil, fmt.Errorf("cannot load font: %s", path)
 	}
 	return first, nil
 }

@@ -21,7 +21,7 @@ type options struct {
 	ratio, width                    int
 }
 
-const help = `rex-md-viewer: Markdown を Rex でプレビューする
+const help = `rex-md-viewer: Preview Markdown in Rex
 
 Usage:
   rex-md-viewer view [--in-place | --below] [--ratio 50] [OPTIONS] FILE
@@ -31,17 +31,17 @@ Usage:
   rex-md-viewer skill show
   rex-md-viewer --version
 
-描画オプション:
-  --theme terminal|light|dark   view の既定: terminal、render の既定: light
-  --font PATH                   本文用 TTF/OTF/TTC（REX_MD_VIEWER_FONT より優先）
-  --font-bold PATH              太字用フォント（REX_MD_VIEWER_FONT_BOLD より優先）
+Rendering options:
+  --theme terminal|light|dark   Default: terminal for view, light for render
+  --font PATH                   Body font (TTF/OTF/TTC); overrides REX_MD_VIEWER_FONT
+  --font-bold PATH              Bold font (TTF/OTF/TTC); overrides REX_MD_VIEWER_FONT_BOLD
 
-フォントは環境変数 → SF Pro Text → Inter → 同梱 Go フォントの順に選びます。
-不足する日本語のグリフはシステム上の日本語フォントで補います。
+Font priority: CLI option > environment variable > SF Pro Text > Inter > bundled Go font.
+Missing Japanese glyphs fall back to Japanese fonts installed on the system.
 
-view は右側に分割して表示し、--in-place は現在の端末に表示します。
---in-place と --below / --ratio は併用できません。
-q / Ctrl-C: 終了、j/k: スクロール、Space/b: ページ移動、g/G: 先頭/末尾、r: 再読み込み
+view opens a split pane on the right; --in-place displays in the current terminal.
+--in-place cannot be combined with --below or --ratio.
+q / Ctrl-C: quit, j/k: scroll, Space/b: page down/up, g/G: top/bottom, r: reload
 `
 
 func parseOptions(command string, args []string, out io.Writer) (options, error) {
@@ -52,16 +52,16 @@ func parseOptions(command string, args []string, out io.Writer) (options, error)
 	f := flag.NewFlagSet(command, flag.ContinueOnError)
 	f.SetOutput(io.Discard)
 	f.Usage = func() { fmt.Fprint(out, help) }
-	f.StringVar(&o.theme, "theme", o.theme, "配色")
-	f.StringVar(&o.font, "font", "", "本文フォント")
-	f.StringVar(&o.bold, "font-bold", "", "太字フォント")
+	f.StringVar(&o.theme, "theme", o.theme, "Color theme")
+	f.StringVar(&o.font, "font", "", "Body font")
+	f.StringVar(&o.bold, "font-bold", "", "Bold font")
 	if command == "view" {
-		f.BoolVar(&o.inPlace, "in-place", false, "現在の端末で表示")
-		f.BoolVar(&o.below, "below", false, "下側に分割")
-		f.IntVar(&o.ratio, "ratio", o.ratio, "ペインの割合")
+		f.BoolVar(&o.inPlace, "in-place", false, "Display in the current terminal")
+		f.BoolVar(&o.below, "below", false, "Split below")
+		f.IntVar(&o.ratio, "ratio", o.ratio, "Pane size percentage")
 	} else {
-		f.IntVar(&o.width, "width", 1000, "画像の幅")
-		f.StringVar(&o.output, "o", "", "出力 PNG")
+		f.IntVar(&o.width, "width", 1000, "Image width in pixels")
+		f.StringVar(&o.output, "o", "", "Output PNG path")
 	}
 	if err := f.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -70,11 +70,11 @@ func parseOptions(command string, args []string, out io.Writer) (options, error)
 		return o, usagef("%s", err)
 	}
 	if f.NArg() != 1 {
-		return o, usagef("%s: FILE を 1 つ指定してください", command)
+		return o, usagef("%s: specify exactly one FILE", command)
 	}
 	o.file = f.Arg(0)
 	if o.theme != "light" && o.theme != "dark" && !(command == "view" && o.theme == "terminal") {
-		return o, usagef("不正な --theme: %s", o.theme)
+		return o, usagef("invalid --theme: %s", o.theme)
 	}
 	if command == "view" {
 		splitSet := false
@@ -84,17 +84,17 @@ func parseOptions(command string, args []string, out io.Writer) (options, error)
 			}
 		})
 		if o.inPlace && splitSet {
-			return o, usagef("--in-place と --below / --ratio は併用できません")
+			return o, usagef("--in-place cannot be combined with --below or --ratio")
 		}
 		if o.ratio < 1 || o.ratio > 99 {
-			return o, usagef("--ratio は 1〜99 を指定してください")
+			return o, usagef("--ratio must be between 1 and 99")
 		}
 	} else {
 		if o.width < 1 || o.width > 8192 {
-			return o, usagef("--width は 1〜8192 を指定してください")
+			return o, usagef("--width must be between 1 and 8192")
 		}
 		if o.output == "" {
-			return o, usagef("render には -o OUTPUT.png が必要です")
+			return o, usagef("render requires -o OUTPUT.png")
 		}
 	}
 	return o, nil
@@ -103,7 +103,7 @@ func parseOptions(command string, args []string, out io.Writer) (options, error)
 func run(args []string, out io.Writer) error {
 	if len(args) == 0 {
 		fmt.Fprint(out, help)
-		return usagef("コマンドを指定してください")
+		return usagef("specify a command")
 	}
 	switch args[0] {
 	case "--help", "-h", "help":
@@ -125,7 +125,7 @@ func run(args []string, out io.Writer) error {
 			return usagef("%s", err)
 		}
 		if f.NArg() != 1 {
-			return usagef("hide: FILE を 1 つ指定してください")
+			return usagef("hide: specify exactly one FILE")
 		}
 		path, err := filepath.Abs(f.Arg(0))
 		if err != nil {
@@ -173,7 +173,7 @@ func run(args []string, out io.Writer) error {
 		o.font, o.bold = fonts.bodyPath, fonts.boldPath
 		return managePane(o.file, o, false, out)
 	default:
-		return usagef("不明なコマンド: %s", args[0])
+		return usagef("unknown command: %s", args[0])
 	}
 }
 
@@ -198,14 +198,14 @@ func renderFile(o options, data []byte, fonts *fontSet) error {
 		return err
 	}
 	if existing, e := os.Stat(dest); dest == o.file || (e == nil && os.SameFile(in, existing)) {
-		return fmt.Errorf("入力 Markdown への上書きはできません")
+		return fmt.Errorf("cannot overwrite the input Markdown file")
 	}
 	doc, err := layoutMarkdown(data, o.file, o.width, 1, fonts, paletteFor(o.theme))
 	if err != nil {
 		return err
 	}
 	if int64(doc.width)*int64(doc.height) > maxRenderPixels {
-		return fmt.Errorf("PNG が大きすぎます（上限 %s 画素）。--width を小さくするか文書を分割してください", strconv.Itoa(maxRenderPixels))
+		return fmt.Errorf("PNG is too large (limit: %s pixels); reduce --width or split the document", strconv.Itoa(maxRenderPixels))
 	}
 	img := doc.paint(0, doc.height)
 	return writePNG(dest, img)

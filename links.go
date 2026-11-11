@@ -103,10 +103,10 @@ func (d *document) linkAt(p image.Point) int {
 func browserCommand(ctx context.Context, destination string) (*exec.Cmd, error) {
 	target, ok := externalURL(destination)
 	if !ok {
-		return nil, fmt.Errorf("開けないリンク先です")
+		return nil, fmt.Errorf("cannot open this link destination")
 	}
 	if runtime.GOOS != "darwin" {
-		return nil, fmt.Errorf("外部リンクを開く機能は macOS のみ対応しています")
+		return nil, fmt.Errorf("opening external links is only supported on macOS")
 	}
 	// /usr/bin/open delegates http(s) to the default browser. No shell, stdin,
 	// terminal output, or Markdown-supplied executable is involved.

@@ -89,7 +89,7 @@ func TestUnsupportedLinksAreNotClickable(t *testing.T) {
 	if len(doc.links) != 0 {
 		t.Fatalf("unsupported content has clickable regions: %+v", doc.links)
 	}
-	for _, text := range []string{"file", "local", "anchor", "mail", "js", "HTML", "画像: failed"} {
+	for _, text := range []string{"file", "local", "anchor", "mail", "js", "HTML", "Image: failed"} {
 		if !strings.Contains(sceneText(doc), text) {
 			t.Errorf("lost display text %q", text)
 		}

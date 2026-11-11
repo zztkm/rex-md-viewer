@@ -122,7 +122,7 @@ func safeText(s string) string {
 
 func layoutMarkdown(source []byte, path string, width int, scale float64, fonts *fontSet, colors palette) (*document, error) {
 	if width < 1 || width > 8192 {
-		return nil, fmt.Errorf("描画幅は 1〜8192 ピクセルにしてください")
+		return nil, fmt.Errorf("render width must be between 1 and 8192 pixels")
 	}
 	// CommonMark treats CRLF and CR as line endings, including inside code.
 	// Normalize only the rendering input; the monitor compares original bytes.
@@ -134,7 +134,7 @@ func layoutMarkdown(source []byte, path string, width int, scale float64, fonts 
 	markdown := goldmark.New(goldmark.WithExtensions(extension.Table, extension.TaskList, extension.Strikethrough, extension.Linkify), goldmark.WithParserOptions(parser.WithInlineParsers(util.Prioritized(&wipParser{}, 0))))
 	root := markdown.Parser().Parse(text.NewReader(source))
 	if len(source) == 0 {
-		l.inline([]inlinePart{{text: "空のファイル", style: l.normal()}}, pad, width-pad, 0)
+		l.inline([]inlinePart{{text: "Empty file", style: l.normal()}}, pad, width-pad, 0)
 	} else {
 		l.blocks(root, pad, width-pad)
 	}
@@ -151,7 +151,7 @@ func (l *layout) addOp(op paintOp) bool {
 		return false
 	}
 	if len(l.doc.ops) >= maxGlyphs {
-		l.err = fmt.Errorf("文書の描画要素が多すぎます（上限 %d）", maxGlyphs)
+		l.err = fmt.Errorf("document has too many rendering elements (limit: %d)", maxGlyphs)
 		return false
 	}
 	l.doc.ops = append(l.doc.ops, op)
@@ -163,7 +163,7 @@ func (l *layout) fill(r image.Rectangle, c color.RGBA) bool {
 func (l *layout) glyph(s string, x, y int, st textStyle, width int) {
 	r := []rune(s)[0]
 	if _, ok := l.doc.fonts.sourceFor(r, st.bold, st.code && r < 128); !ok && isJapanese(r) {
-		l.err = fmt.Errorf("日本語文字 %q (U+%04X) を描画できません。--font または %s に日本語対応フォントを指定してください", r, r, fontEnv)
+		l.err = fmt.Errorf("cannot render Japanese character %q (U+%04X); specify a Japanese font with --font or %s", r, r, fontEnv)
 		return
 	}
 	height := st.size * 2
@@ -628,7 +628,7 @@ func (l *layout) imageBlock(n *ast.Image, left, right int, st textStyle) {
 	img, err := l.localImage(string(n.Destination), max(1, right-left))
 	if err != nil {
 		st.ink = l.doc.colors.muted
-		l.inline([]inlinePart{{text: fmt.Sprintf("[画像: %s] %s", alt, err), style: st}}, left, right, 0)
+		l.inline([]inlinePart{{text: fmt.Sprintf("[Image: %s] %s", alt, err), style: st}}, left, right, 0)
 		return
 	}
 	r := image.Rect(left, l.y, left+img.Bounds().Dx(), l.y+img.Bounds().Dy())
@@ -638,10 +638,10 @@ func (l *layout) imageBlock(n *ast.Image, left, right int, st textStyle) {
 func (l *layout) localImage(destination string, width int) (image.Image, error) {
 	u, err := url.Parse(html.UnescapeString(destination))
 	if err != nil {
-		return nil, fmt.Errorf("不正なパス")
+		return nil, fmt.Errorf("invalid path")
 	}
 	if u.Scheme != "" || u.Host != "" || strings.HasPrefix(destination, "//") {
-		return nil, fmt.Errorf("リモート画像は未対応")
+		return nil, fmt.Errorf("remote images are not supported")
 	}
 	path := u.Path
 	if !filepath.IsAbs(path) {
@@ -653,10 +653,10 @@ func (l *layout) localImage(destination string, width int) (image.Image, error) 
 	}
 	info, err := os.Stat(path)
 	if err != nil {
-		return nil, fmt.Errorf("読み込み失敗: %s", safeText(err.Error()))
+		return nil, fmt.Errorf("failed to read image: %s", safeText(err.Error()))
 	}
 	if !info.Mode().IsRegular() || info.Size() > 32<<20 {
-		return nil, fmt.Errorf("画像ファイルが大きすぎるか通常ファイルではありません")
+		return nil, fmt.Errorf("image file is too large or is not a regular file")
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -665,21 +665,21 @@ func (l *layout) localImage(destination string, width int) (image.Image, error) 
 	defer f.Close()
 	cfg, format, err := image.DecodeConfig(f)
 	if err != nil {
-		return nil, fmt.Errorf("未対応形式または破損した画像")
+		return nil, fmt.Errorf("unsupported format or corrupt image")
 	}
 	if format != "png" && format != "jpeg" && format != "gif" {
-		return nil, fmt.Errorf("未対応の画像形式")
+		return nil, fmt.Errorf("unsupported image format")
 	}
 	pixels := int64(cfg.Width) * int64(cfg.Height)
 	if cfg.Width < 1 || cfg.Height < 1 || pixels > maxImagePixels || l.imagePixels+pixels > maxRenderPixels {
-		return nil, fmt.Errorf("画像の画素数が上限を超えています")
+		return nil, fmt.Errorf("image exceeds the pixel limit")
 	}
 	if _, err = f.Seek(0, 0); err != nil {
 		return nil, err
 	}
 	img, _, err := image.Decode(f)
 	if err != nil {
-		return nil, fmt.Errorf("画像のデコードに失敗")
+		return nil, fmt.Errorf("failed to decode image")
 	}
 	if img.Bounds().Dx() > width {
 		h := max(1, img.Bounds().Dy()*width/img.Bounds().Dx())

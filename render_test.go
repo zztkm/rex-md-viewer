@@ -131,7 +131,7 @@ func TestNarrowTableAndEmptyDocument(t *testing.T) {
 		}
 		doc.paint(0, min(doc.height, 200))
 	}
-	if text := sceneText(layoutText(t, "", 200)); text != "空のファイル" {
+	if text := sceneText(layoutText(t, "", 200)); text != "Empty file" {
 		t.Fatal(text)
 	}
 }
@@ -221,7 +221,7 @@ func TestRenderPixelLimit(t *testing.T) {
 	data := []byte(strings.Repeat("line\n\n", 5000))
 	os.WriteFile(input, data, 0600)
 	err := renderFile(options{file: input, output: filepath.Join(dir, "out.png"), width: 1000, theme: "light"}, data, fonts)
-	if err == nil || !strings.Contains(err.Error(), "大きすぎ") {
+	if err == nil || !strings.Contains(err.Error(), "too large") {
 		t.Fatalf("%v", err)
 	}
 }
