@@ -364,7 +364,7 @@ func viewWithOpener(o options, initial []byte, fonts *fontSet, openURL func(cont
 	if err != nil {
 		return err
 	}
-	scale := func(s terminalSize) float64 { return max(0.5, float64(s.height)/float64(s.rows)/20) }
+	scale := func(s terminalSize) float64 { return max(0.5, float64(s.height)/float64(s.rows)/20) * o.scale }
 	doc, err := layoutMarkdown(initial, o.file, size.width, scale(size), fonts, colors)
 	if err != nil {
 		return err

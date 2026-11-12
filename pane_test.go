@@ -140,7 +140,7 @@ func readFakeState(t *testing.T, path string) fakeRexState {
 func TestPaneConcurrentReuseAndHide(t *testing.T) {
 	path := setupFakeRex(t)
 	file := "/tmp/日本語 ' ${x}; $(no).md"
-	o := options{file: file, ratio: 40, theme: "dark"}
+	o := options{file: file, ratio: 40, theme: "dark", scale: 1}
 	var wg sync.WaitGroup
 	outs := make([]bytes.Buffer, 3)
 	errs := make([]error, 3)
@@ -186,7 +186,7 @@ func TestPaneConcurrentReuseAndHide(t *testing.T) {
 func TestPaneDoesNotCloseUnrelatedBlock(t *testing.T) {
 	path := setupFakeRex(t)
 	file := "/tmp/doc"
-	o := options{file: file, ratio: 40, theme: "dark"}
+	o := options{file: file, ratio: 40, theme: "dark", scale: 1}
 	if err := managePane(file, o, false, io.Discard); err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestPaneDoesNotCloseUnrelatedBlock(t *testing.T) {
 func TestPaneConnectionFailureKeepsRecord(t *testing.T) {
 	setupFakeRex(t)
 	file := "/tmp/doc"
-	o := options{file: file, ratio: 40, theme: "dark"}
+	o := options{file: file, ratio: 40, theme: "dark", scale: 1}
 	if err := managePane(file, o, false, io.Discard); err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +224,7 @@ func TestPaneRecoversTimedOutSplit(t *testing.T) {
 	path := setupFakeRex(t)
 	t.Setenv("REX_MD_TEST_FAIL", "split-after-create")
 	file := "/tmp/doc"
-	if err := managePane(file, options{file: file, ratio: 40, theme: "dark"}, false, io.Discard); err != nil {
+	if err := managePane(file, options{file: file, ratio: 40, theme: "dark", scale: 1}, false, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if readFakeState(t, path).Splits != 1 {

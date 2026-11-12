@@ -38,7 +38,7 @@ with tempfile.TemporaryDirectory(prefix="rex-md-smoke-") as temp:
     block = None
     try:
         with ThreadPoolExecutor(max_workers=3) as pool:
-            ids = list(pool.map(lambda _: viewer("view", "--below", "--ratio", "30", "--", str(file)), range(3)))
+            ids = list(pool.map(lambda _: viewer("view", "--below", "--ratio", "30", "--scale", "1.2", "--", str(file)), range(3)))
         assert len(set(ids)) == 1, ids
         block = ids[0]
         assert focused() == before, "focus changed"
@@ -57,6 +57,9 @@ with tempfile.TemporaryDirectory(prefix="rex-md-smoke-") as temp:
             raise AssertionError(content)
 
         content = wait_for(lambda c: "Viewing" in c)
+        assert viewer("view", "--scale", "2", "--", str(file)) == block
+        assert capture() == content, "reuse changed the existing viewer settings"
+        print("PASS scale 1.2 startup and reuse without changing scale")
         stamp = file.stat()
         start = time.monotonic()
         file.write_text(source.replace("English", "Changed"))

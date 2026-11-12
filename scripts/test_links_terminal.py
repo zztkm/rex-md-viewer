@@ -18,14 +18,14 @@ BINARY = sys.argv[1]
 SOURCE = "[click](https://example.com/first)[next](https://example.com/second)\n\n" + "body text\n\n" * 100
 
 
-def exercise(capable):
+def exercise(capable, scale="1"):
     with tempfile.TemporaryDirectory(prefix="rex-md-link-pty-") as temp:
         path = Path(temp) / "links.md"
         path.write_text(SOURCE)
         master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 640, 432))
         before = copy.deepcopy(termios.tcgetattr(slave))
-        env = dict(os.environ, REX_MD_LINK_TEST_FILE=str(path))
+        env = dict(os.environ, REX_MD_LINK_TEST_FILE=str(path), REX_MD_VIEWER_SCALE=scale)
         # The race runtime normally waits one second at process exit. Disable
         # only that delay so the responsiveness assertion measures the viewer.
         env["GORACE"] = env.get("GORACE", "") + " atexit_sleep_ms=0"
@@ -207,7 +207,7 @@ def exercise(capable):
             for mode in (1002, 1004, 1006, 1016):
                 assert f"\x1b[?{mode}l".encode() in history
             assert b"\x1b[<u" in history and b"\x1b[?1049l" in history
-            print(f"PASS link PTY integration, capable={capable}")
+            print(f"PASS link PTY integration, capable={capable}, scale={scale}")
         finally:
             if proc.poll() is None:
                 proc.kill()
@@ -216,5 +216,6 @@ def exercise(capable):
             os.close(slave)
 
 
-exercise(True)
+for scale in ("0.5", "1", "4"):
+    exercise(True, scale)
 exercise(False)

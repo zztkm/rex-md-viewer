@@ -23,7 +23,10 @@ Specifying the same absolute path from the same calling pane reuses the existing
 The preview updates automatically on save; do not restart it for each update.
 
 ```bash
-# Display below the current pane
+# Adjust text and spacing without changing the pane size (default scale: 1)
+rex-md-viewer view --scale 1.2 -- "/absolute/path/README.md"
+
+# Display below the current pane; --scale can be combined with --below and --ratio
 rex-md-viewer view --below --ratio 40 -- "/absolute/path/README.md"
 
 # Specify fonts with Japanese support
@@ -33,6 +36,23 @@ rex-md-viewer view --font "/path/to/regular.ttf" --font-bold "/path/to/bold.ttf"
 Outside Rex, do not attempt to split panes; explain that Rex is required.
 Do not guess or operate on another session.
 To change display settings, close the existing viewer and reopen it.
+
+## Set the display scale
+
+Use `--scale N` with `view`, `view --in-place`, or `render` to adjust text and spacing without changing the pane size.
+The range is `0.5` to `4`; `1` preserves the current size.
+
+```bash
+rex-md-viewer view --scale 1.2 -- "/absolute/path/README.md"
+```
+
+CLI overrides `REX_MD_VIEWER_SCALE`, which overrides the default of `1`.
+An unset or empty environment variable uses the default; an invalid selected value is an error.
+The multiplier applies after automatic terminal sizing, unlike rexpad's absolute scale.
+Local images retain their existing sizing rules, and terminal filename and status lines do not scale.
+For `render`, `--width` remains the PNG width in pixels.
+Existing panes keep their original scale; close and reopen only when the user requests a display change.
+Saving, reloading, resizing, and theme changes retain the multiplier. There are no runtime zoom keys.
 
 ## Configure fonts
 
@@ -80,6 +100,7 @@ rex-md-viewer view --in-place -- "/absolute/path/README.md"
 ```
 
 `--in-place` cannot be combined with `--below` or `--ratio`.
+Add `--scale N` to adjust text and spacing here, as in a split pane.
 The initial release has been tested in Rex on macOS.
 Scroll with j/k, arrow keys, or the mouse wheel.
 Use Space/b to page down/up, g/G to jump to the top/bottom, and r to reload, including images.

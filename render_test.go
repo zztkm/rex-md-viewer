@@ -197,12 +197,12 @@ func TestRenderProtectsInputAndAliases(t *testing.T) {
 	os.Symlink(input, aliases[1])
 	os.Link(input, aliases[2])
 	for _, output := range aliases {
-		if err := renderFile(options{file: input, output: output, width: 100, theme: "light"}, []byte("# safe"), fonts); err == nil {
+		if err := renderFile(options{file: input, output: output, width: 100, theme: "light", scale: 1}, []byte("# safe"), fonts); err == nil {
 			t.Fatalf("overwrote %s", output)
 		}
 	}
 	output := filepath.Join(dir, "out.png")
-	if err := renderFile(options{file: input, output: output, width: 100, theme: "light"}, []byte("# safe"), fonts); err != nil {
+	if err := renderFile(options{file: input, output: output, width: 100, theme: "light", scale: 1}, []byte("# safe"), fonts); err != nil {
 		t.Fatal(err)
 	}
 	f, err := os.Open(output)
@@ -220,9 +220,11 @@ func TestRenderPixelLimit(t *testing.T) {
 	input := filepath.Join(dir, "long.md")
 	data := []byte(strings.Repeat("line\n\n", 5000))
 	os.WriteFile(input, data, 0600)
-	err := renderFile(options{file: input, output: filepath.Join(dir, "out.png"), width: 1000, theme: "light"}, data, fonts)
-	if err == nil || !strings.Contains(err.Error(), "too large") {
-		t.Fatalf("%v", err)
+	for _, scale := range []float64{1, 4} {
+		err := renderFile(options{file: input, output: filepath.Join(dir, "out.png"), width: 1000, theme: "light", scale: scale}, data, fonts)
+		if err == nil || !strings.Contains(err.Error(), "too large") {
+			t.Fatalf("scale=%g: %v", scale, err)
+		}
 	}
 }
 func TestInvalidFontsAndSafeText(t *testing.T) {

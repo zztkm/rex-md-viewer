@@ -24,18 +24,52 @@ Add the `go install` destination (usually `~/go/bin`) to your `PATH`.
 # Open a preview on the right. Repeated calls reuse the same viewer
 rex-md-viewer view README.md
 
-# Display in the current terminal (press q or Ctrl-C to quit)
+# Enlarge text and spacing without changing the pane size (default scale: 1)
+rex-md-viewer view --scale 1.2 README.md
+
+# Display in the current terminal (press q or Ctrl-C to quit; --scale also works here)
 rex-md-viewer view --in-place README.md
 
 # Close the split-pane preview
 rex-md-viewer hide README.md
 
-# Generate a PNG without connecting to Rex
-rex-md-viewer render -o preview.png testdata/sample.md
+# Generate a PNG without connecting to Rex; --scale changes text size, not output width
+rex-md-viewer render --scale 1.2 -o preview.png testdata/sample.md
 
 # Install the Agent Skill
 rex-md-viewer skill install --dir ~/.pi/agent/skills
 ```
+
+### Display scale
+
+`--scale N` changes text size and spacing without changing the pane size.
+It accepts finite values from `0.5` to `4`, with a default of `1` for the current size.
+For `view`, the multiplier applies after automatic sizing to the terminal's cell height.
+Resizing, saving, reloading, and theme changes retain the multiplier.
+Unlike rexpad's absolute drawing scale, this is a relative multiplier.
+
+```bash
+rex-md-viewer view --scale 1.2 README.md
+rex-md-viewer view --below --ratio 40 --scale 0.8 README.md
+rex-md-viewer view --in-place --scale 1.2 README.md
+rex-md-viewer render --width 1000 --scale 1.5 -o preview.png README.md
+
+export REX_MD_VIEWER_SCALE=1.2
+rex-md-viewer view README.md
+```
+
+The priority is CLI option, `REX_MD_VIEWER_SCALE`, then `1`.
+An unset or empty environment variable uses the default.
+Invalid selected values, including zero, NaN, infinity, and out-of-range numbers, exit with code `2` before file reads, pane creation, or PNG output.
+A CLI value overrides even an invalid environment variable.
+
+Text, headings, code, spacing, list markers, and TODO decorations are laid out again at the selected size.
+Pixel rounding and narrow-pane limits still apply.
+Local images keep their existing sizing rules, fitting within the text width without enlargement.
+The terminal's filename and status lines do not scale.
+For `render`, `--width` remains the output width in pixels; larger text wraps more and can produce a taller PNG.
+Repeated `view` calls reuse the existing pane without changing its scale. Use `hide` and reopen to change it.
+There are no runtime zoom keys.
 
 ### Font configuration
 

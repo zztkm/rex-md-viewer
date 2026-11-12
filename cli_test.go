@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -70,8 +71,8 @@ func TestParseOptions(t *testing.T) {
 }
 
 func TestChildArgsPreservePaths(t *testing.T) {
-	o := options{file: "/tmp/日本語 '$() ;.md", font: "/font body.ttf", bold: "/font bold.ttf", theme: "dark"}
-	want := []string{"/path to/self", "view", "--in-place", "--theme", "dark", "--font", o.font, "--font-bold", o.bold, "--", o.file}
+	o := options{file: "/tmp/日本語 '$() ;.md", font: "/font body.ttf", bold: "/font bold.ttf", theme: "dark", scale: 1}
+	want := []string{"/path to/self", "view", "--in-place", "--theme", "dark", "--scale", "1", "--font", o.font, "--font-bold", o.bold, "--", o.file}
 	if got := childArgs("/path to/self", o); !reflect.DeepEqual(got, want) {
 		t.Fatalf("%q", got)
 	}
@@ -87,6 +88,27 @@ func TestHelpAndUnknownCommand(t *testing.T) {
 		t.Fatal("old show command accepted")
 	}
 }
+func TestHelpShowsScaleInCommandUsage(t *testing.T) {
+	for _, command := range []string{"view", "render"} {
+		t.Run(command, func(t *testing.T) {
+			var out bytes.Buffer
+			if err := run([]string{command, "--help"}, &out); err != nil {
+				t.Fatal(err)
+			}
+			prefix := "rex-md-viewer " + command + " "
+			for _, line := range strings.Split(out.String(), "\n") {
+				if strings.HasPrefix(strings.TrimSpace(line), prefix) {
+					if !strings.Contains(line, "[--scale 1]") {
+						t.Fatalf("%s usage does not advertise --scale: %s", command, line)
+					}
+					return
+				}
+			}
+			t.Fatalf("missing %s usage", command)
+		})
+	}
+}
+
 func TestSkillInstall(t *testing.T) {
 	dir := t.TempDir()
 	args := []string{"install", "--dir", dir}

@@ -92,8 +92,12 @@ func TestWIPWrappingAndNesting(t *testing.T) {
 	}
 }
 func TestWIPAnimationTilesMatchFullFrame(t *testing.T) {
-	for _, width := range []int{12, 300, 301} {
-		doc := listDocument(t, strings.Repeat("- [~] Working **word** word word\n- [ ] Pending\n", 10), width, 1)
+	for _, tc := range []struct {
+		width int
+		scale float64
+	}{{12, 0.5}, {12, 1}, {12, 4}, {300, 0.5}, {300, 1}, {300, 1.2}, {300, 4}, {301, 1}, {301, 4}} {
+		width := tc.width
+		doc := listDocument(t, strings.Repeat("- [~] Working **word** word word\n- [ ] Pending\n", 10), width, tc.scale)
 		for _, offset := range []int{0, 1, 37} {
 			base := doc.paintBase(offset, 399)
 			expected := image.NewRGBA(base.Bounds())

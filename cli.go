@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,19 +20,23 @@ type options struct {
 	file, output, theme, font, bold string
 	inPlace, below                  bool
 	ratio, width                    int
+	scale                           float64
 }
+
+const scaleEnv = "REX_MD_VIEWER_SCALE"
 
 const help = `rex-md-viewer: Preview Markdown in Rex
 
 Usage:
-  rex-md-viewer view [--in-place | --below] [--ratio 50] [OPTIONS] FILE
+  rex-md-viewer view [--in-place | --below] [--ratio 50] [--scale 1] [OPTIONS] FILE
   rex-md-viewer hide FILE
-  rex-md-viewer render [--width 1000] [OPTIONS] -o OUTPUT.png FILE
+  rex-md-viewer render [--width 1000] [--scale 1] [OPTIONS] -o OUTPUT.png FILE
   rex-md-viewer skill install --dir DIR [--force]
   rex-md-viewer skill show
   rex-md-viewer --version
 
 Rendering options:
+  --scale N                     Relative size, 0.5 to 4 (default: 1); overrides REX_MD_VIEWER_SCALE
   --theme terminal|light|dark   Default: terminal for view, light for render
   --font PATH                   Body font (TTF/OTF/TTC); overrides REX_MD_VIEWER_FONT
   --font-bold PATH              Bold font (TTF/OTF/TTC); overrides REX_MD_VIEWER_FONT_BOLD
@@ -41,6 +46,8 @@ Missing Japanese glyphs fall back to Japanese fonts installed on the system.
 
 view opens a split pane on the right; --in-place displays in the current terminal.
 --in-place cannot be combined with --below or --ratio.
+--scale multiplies the automatic view size; render keeps --width in pixels.
+Existing panes keep their settings; hide and reopen to change the scale.
 q / Ctrl-C: quit, j/k: scroll, Space/b: page down/up, g/G: top/bottom, r: reload
 `
 
@@ -52,6 +59,8 @@ func parseOptions(command string, args []string, out io.Writer) (options, error)
 	f := flag.NewFlagSet(command, flag.ContinueOnError)
 	f.SetOutput(io.Discard)
 	f.Usage = func() { fmt.Fprint(out, help) }
+	scaleValue := "1"
+	f.StringVar(&scaleValue, "scale", scaleValue, "Relative size (0.5 to 4)")
 	f.StringVar(&o.theme, "theme", o.theme, "Color theme")
 	f.StringVar(&o.font, "font", "", "Body font")
 	f.StringVar(&o.bold, "font-bold", "", "Bold font")
@@ -73,6 +82,23 @@ func parseOptions(command string, args []string, out io.Writer) (options, error)
 		return o, usagef("%s: specify exactly one FILE", command)
 	}
 	o.file = f.Arg(0)
+	scaleSet := false
+	f.Visit(func(fl *flag.Flag) {
+		if fl.Name == "scale" {
+			scaleSet = true
+		}
+	})
+	scaleSource := "--scale"
+	if !scaleSet {
+		if value := os.Getenv(scaleEnv); value != "" {
+			scaleValue, scaleSource = value, scaleEnv
+		}
+	}
+	var err error
+	o.scale, err = strconv.ParseFloat(scaleValue, 64)
+	if err != nil || math.IsNaN(o.scale) || math.IsInf(o.scale, 0) || o.scale < 0.5 || o.scale > 4 {
+		return o, usagef("%s must be a finite number between 0.5 and 4 (got %q)", scaleSource, scaleValue)
+	}
 	if o.theme != "light" && o.theme != "dark" && !(command == "view" && o.theme == "terminal") {
 		return o, usagef("invalid --theme: %s", o.theme)
 	}
@@ -178,7 +204,7 @@ func run(args []string, out io.Writer) error {
 }
 
 func childArgs(self string, o options) []string {
-	args := []string{self, "view", "--in-place", "--theme", o.theme}
+	args := []string{self, "view", "--in-place", "--theme", o.theme, "--scale", strconv.FormatFloat(o.scale, 'g', -1, 64)}
 	if o.font != "" {
 		args = append(args, "--font", o.font)
 	}
@@ -200,7 +226,7 @@ func renderFile(o options, data []byte, fonts *fontSet) error {
 	if existing, e := os.Stat(dest); dest == o.file || (e == nil && os.SameFile(in, existing)) {
 		return fmt.Errorf("cannot overwrite the input Markdown file")
 	}
-	doc, err := layoutMarkdown(data, o.file, o.width, 1, fonts, paletteFor(o.theme))
+	doc, err := layoutMarkdown(data, o.file, o.width, o.scale, fonts, paletteFor(o.theme))
 	if err != nil {
 		return err
 	}

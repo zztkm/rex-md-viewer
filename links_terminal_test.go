@@ -28,11 +28,25 @@ func TestLinkViewerHelper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	size, err := getSize(int(os.Stdin.Fd()))
+	var size terminalSize
+	geometryOnly := os.Getenv("REX_MD_LINK_TEST_GEOMETRY")
+	if geometryOnly != "" {
+		var dimensions [4]int
+		if err := json.Unmarshal([]byte(geometryOnly), &dimensions); err != nil {
+			t.Fatal(err)
+		}
+		size = terminalSize{dimensions[0], dimensions[1], dimensions[2], dimensions[3]}
+	} else {
+		size, err = getSize(int(os.Stdin.Fd()))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	o, err := parseOptions("view", []string{"--in-place", "--theme", "dark", "--", file}, os.Stderr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, err := layoutMarkdown(data, file, size.width, max(0.5, float64(size.height)/float64(size.rows)/20), fonts, paletteFor("dark"))
+	doc, err := layoutMarkdown(data, file, size.width, max(0.5, float64(size.height)/float64(size.rows)/20)*o.scale, fonts, paletteFor("dark"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,6 +57,13 @@ func TestLinkViewerHelper(t *testing.T) {
 	encoded, _ := json.Marshal(points)
 	if err := os.WriteFile(file+".points", encoded, 0600); err != nil {
 		t.Fatal(err)
+	}
+	geometry, _ := json.Marshal([]int{size.cols, size.rows, size.width, size.height})
+	if err := os.WriteFile(file+".geometry", geometry, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if geometryOnly != "" {
+		return
 	}
 	opener := func(ctx context.Context, target string) error {
 		f, err := os.OpenFile(file+".opened", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
@@ -69,7 +90,7 @@ func TestLinkViewerHelper(t *testing.T) {
 		}
 		return nil
 	}
-	if err := viewWithOpener(options{file: file, theme: "dark"}, data, fonts, opener); err != nil {
+	if err := viewWithOpener(o, data, fonts, opener); err != nil {
 		t.Fatal(err)
 	}
 }
